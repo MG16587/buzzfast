@@ -3,1662 +3,1050 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>BuzzFast - Audience Response & Buzzer System</title>
-  
-  <!-- External dependencies: Tailwind CSS, FontAwesome, Tone.js, QRCode.js, Canvas-Confetti -->
+  <title>BuzzFast - Live Audience Buzzer</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#f5f3ff',
-              100: '#ede9fe',
-              500: '#8b5cf6',
-              600: '#7c3aed',
-              700: '#6d28d9',
-              900: '#4c1d95',
-            },
-            buzzer: {
-              red: '#ef4444',
-              redHover: '#dc2626',
-              gold: '#f59e0b',
-              emerald: '#10b981'
-            }
-          },
-          animation: {
-            'pulse-fast': 'pulse 0.8s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-            'bounce-short': 'bounce 0.5s ease-in-out 2',
-          }
-        }
-      }
-    }
-  </script>
-
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+  <!-- MQTT for true cross-device real-time sync across mobile phones and host laptops -->
+  <script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
+  
   <style>
-    /* Prevent accidental double-tap zoom on fast mobile buzzers */
-    button, .tap-shield {
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+    
+    * {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
       touch-action: manipulation;
-      user-select: none;
-      -webkit-user-select: none;
       -webkit-tap-highlight-color: transparent;
+      user-select: none;
     }
     
-    /* 3D Buzzer Button Styling */
+    input, textarea {
+      user-select: auto;
+    }
+
+    /* Tactile 3D Buzzer styling */
     .buzzer-btn {
-      transition: all 0.08s ease-out;
-      box-shadow: 0 14px 0 #991b1b, 0 18px 25px rgba(0,0,0,0.4);
-    }
-    .buzzer-btn:active, .buzzer-btn.pressed {
-      transform: translateY(10px);
-      box-shadow: 0 4px 0 #991b1b, 0 8px 12px rgba(0,0,0,0.3);
-    }
-    .buzzer-disabled {
-      transform: translateY(10px);
-      box-shadow: 0 2px 0 #4b5563, 0 4px 8px rgba(0,0,0,0.2);
+      transition: transform 0.08s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.08s ease, background 0.2s ease;
+      box-shadow: 0 16px 0 rgba(0, 0, 0, 0.35), 0 24px 30px rgba(0, 0, 0, 0.4);
     }
     
-    /* Custom Scrollbar for scoreboard and buzz list */
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
+    .buzzer-btn:active {
+      transform: translateY(12px) scale(0.98);
+      box-shadow: 0 4px 0 rgba(0, 0, 0, 0.35), 0 8px 15px rgba(0, 0, 0, 0.3);
     }
-    ::-webkit-scrollbar-track {
-      background: rgba(0, 0, 0, 0.05);
+
+    .pulse-glow {
+      animation: pulse-ring 1.8s infinite;
     }
-    ::-webkit-scrollbar-thumb {
-      background: rgba(139, 92, 246, 0.3);
-      border-radius: 9999px;
+
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+      70% { box-shadow: 0 0 0 28px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
     }
-    ::-webkit-scrollbar-thumb:hover {
-      background: rgba(139, 92, 246, 0.6);
+
+    .shake-anim {
+      animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+    }
+
+    @keyframes shake {
+      10%, 90% { transform: translate3d(-2px, 0, 0); }
+      20%, 80% { transform: translate3d(4px, 0, 0); }
+      30%, 50%, 70% { transform: translate3d(-6px, 0, 0); }
+      40%, 60% { transform: translate3d(6px, 0, 0); }
     }
   </style>
 </head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col overflow-x-hidden selection:bg-indigo-500 selection:text-white">
 
-<body class="bg-slate-900 text-slate-100 font-sans min-h-screen flex flex-col antialiased selection:bg-brand-500 selection:text-white">
-
-  <header class="bg-slate-800/90 backdrop-blur border-b border-slate-700/80 sticky top-0 z-50 px-4 py-3 shadow-md">
-    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
-      <!-- App Brand & Title -->
-      <div class="flex items-center gap-3 cursor-pointer" onclick="switchView('landing')">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-pink-500 flex items-center justify-center shadow-lg shadow-brand-500/30">
-          <i class="fa-solid fa-bolt text-white text-xl animate-pulse"></i>
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-40 px-4 py-3">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-indigo-500 flex items-center justify-center font-black text-xl text-white shadow-lg shadow-rose-500/20">
+          ⚡
         </div>
         <div>
-          <h1 class="text-xl font-black tracking-tight bg-gradient-to-r from-white via-slate-100 to-brand-200 bg-clip-text text-transparent">
+          <h1 class="font-extrabold text-lg tracking-tight leading-none bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
             BuzzFast
           </h1>
-          <p class="text-xs text-slate-400 font-medium hidden sm:block">Competitive Real-Time Audience Response System</p>
+          <p class="text-[11px] text-slate-400 font-medium">Real-Time Mobile Response System</p>
         </div>
       </div>
 
-      <!-- Quick Navigation & Role Switcher -->
-      <div class="flex items-center gap-2">
-        <div class="bg-slate-900/90 p-1 rounded-xl border border-slate-700 flex text-xs font-semibold">
-          <button id="nav-btn-landing" onclick="switchView('landing')" class="px-3 py-1.5 rounded-lg transition text-slate-300 hover:text-white">
-            <i class="fa-solid fa-home mr-1"></i> Home
-          </button>
-          <button id="nav-btn-host" onclick="switchView('host')" class="px-3 py-1.5 rounded-lg transition text-slate-300 hover:text-white">
-            <i class="fa-solid fa-desktop mr-1"></i> Host Screen
-          </button>
-          <button id="nav-btn-player" onclick="switchView('player')" class="px-3 py-1.5 rounded-lg transition text-slate-300 hover:text-white">
-            <i class="fa-solid fa-mobile-screen mr-1"></i> Mobile Player
-          </button>
-          <button id="nav-btn-sim" onclick="switchView('simulator')" class="px-3 py-1.5 rounded-lg transition text-slate-300 hover:text-white bg-slate-800 text-brand-400 border border-brand-500/30">
-            <i class="fa-solid fa-vial mr-1"></i> Arena Simulator
-          </button>
+      <!-- Live Network Connection Indicator -->
+      <div class="flex items-center space-x-3">
+        <div id="netStatusPill" class="flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+          <span id="netStatusText">Connecting Cloud Relay...</span>
         </div>
 
-        <!-- Audio Mute Toggle -->
-        <button id="audio-toggle-btn" onclick="toggleAudio()" title="Sound Effects" class="w-9 h-9 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-slate-300 transition shadow">
-          <i id="audio-icon" class="fa-solid fa-volume-high"></i>
+        <button id="soundToggleBtn" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition text-sm flex items-center gap-1.5" title="Toggle Sound Effects">
+          <span id="soundIcon">🔊</span>
         </button>
       </div>
     </div>
   </header>
 
-  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+  <main class="flex-1 max-w-6xl w-full mx-auto p-4 md:p-6 flex flex-col">
 
-  <!-- MAIN VIEWPORT CONTAINER -->
-  <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 flex flex-col justify-center">
-
-    <!-- ========================================================================= -->
-    <!-- 1. LANDING & ROOM SELECTOR VIEW -->
-    <!-- ========================================================================= -->
-    <section id="view-landing" class="w-full max-w-4xl mx-auto py-6 space-y-8">
-      <div class="text-center space-y-3">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-400 text-xs font-semibold uppercase tracking-wider">
-          <i class="fa-solid fa-stopwatch"></i> Low-Latency Speed Buzzer
-        </div>
-        <h2 class="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
-          Who's Got the <span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 via-pink-400 to-amber-400">Fastest Finger?</span>
-        </h2>
-        <p class="text-slate-400 max-w-2xl mx-auto text-sm sm:text-base">
-          Host high-stakes trivia, classroom quizzes, and town hall face-offs. Presenters show the QR code on a projector; participants buzz in directly from their phones with sub-millisecond precision.
-        </p>
+    <!-- VIEW 1: ROLE SELECTOR SCREEN (Initial Landing) -->
+    <section id="roleSelectView" class="my-auto max-w-md mx-auto w-full text-center space-y-6 py-8">
+      <div class="space-y-2">
+        <h2 class="text-3xl font-black text-white tracking-tight">Competitive Buzzers</h2>
+        <p class="text-slate-400 text-sm">Join from your phone to buzz in first, or host the big screen for your room.</p>
       </div>
 
-      <!-- Action Cards Grid -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        
-        <!-- Join as Player Card -->
-        <div class="bg-gradient-to-b from-slate-800 to-slate-800/80 border border-slate-700/80 hover:border-brand-500/50 rounded-2xl p-6 shadow-xl transition hover:-translate-y-1 flex flex-col justify-between">
-          <div>
-            <div class="w-12 h-12 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-2xl mb-4">
-              <i class="fa-solid fa-mobile-screen"></i>
-            </div>
-            <h3 class="text-xl font-bold text-white mb-2">Join a Game</h3>
-            <p class="text-slate-400 text-sm mb-4">Enter on your smartphone to buzz in, submit quick choices, and climb the live leaderboard.</p>
+      <div class="grid grid-cols-1 gap-4 pt-2">
+        <button onclick="App.switchToPlayerMode()" class="p-6 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-left text-white shadow-xl shadow-indigo-600/25 border border-indigo-400/20 transition group">
+          <div class="text-3xl mb-3">📱</div>
+          <div class="font-bold text-xl mb-1 flex items-center justify-between">
+            Join as Player
+            <span class="text-sm font-semibold opacity-80 group-hover:translate-x-1 transition-transform">Enter Room →</span>
           </div>
-          <button onclick="switchView('player')" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl shadow-lg shadow-amber-500/20 transition flex items-center justify-center gap-2">
-            <span>Enter Room Code</span>
-            <i class="fa-solid fa-arrow-right text-sm"></i>
-          </button>
-        </div>
+          <p class="text-xs text-indigo-200">Use this device as your high-speed buzzer button.</p>
+        </button>
 
-        <!-- Host Quiz Card -->
-        <div class="bg-gradient-to-b from-slate-800 to-slate-800/80 border border-slate-700/80 hover:border-brand-500/50 rounded-2xl p-6 shadow-xl transition hover:-translate-y-1 flex flex-col justify-between">
-          <div>
-            <div class="w-12 h-12 rounded-xl bg-brand-500/20 text-brand-400 flex items-center justify-center text-2xl mb-4">
-              <i class="fa-solid fa-tv"></i>
-            </div>
-            <h3 class="text-xl font-bold text-white mb-2">Host on Big Screen</h3>
-            <p class="text-slate-400 text-sm mb-4">Display questions, QR code for instant join, live countdown timers, and accurate buzz order.</p>
+        <button onclick="App.switchToHostMode()" class="p-6 rounded-2xl bg-slate-900 hover:bg-slate-850 text-left text-white border border-slate-700/80 shadow-lg transition group">
+          <div class="text-3xl mb-3">🖥️</div>
+          <div class="font-bold text-xl mb-1 flex items-center justify-between">
+            Host Screen / Projector
+            <span class="text-sm font-semibold text-slate-400 group-hover:translate-x-1 transition-transform">Start Room →</span>
           </div>
-          <button onclick="switchView('host')" class="w-full py-3 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl shadow-lg shadow-brand-600/30 transition flex items-center justify-center gap-2">
-            <span>Start Host Room</span>
-            <i class="fa-solid fa-play text-sm"></i>
-          </button>
-        </div>
-
-        <!-- Multi-Player Simulator Card -->
-        <div class="bg-gradient-to-b from-slate-800 to-slate-800/80 border border-slate-700/80 hover:border-emerald-500/50 rounded-2xl p-6 shadow-xl transition hover:-translate-y-1 flex flex-col justify-between">
-          <div>
-            <div class="w-12 h-12 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-2xl mb-4">
-              <i class="fa-solid fa-layer-group"></i>
-            </div>
-            <h3 class="text-xl font-bold text-white mb-2">Live Arena Simulator</h3>
-            <p class="text-slate-400 text-sm mb-4">Test both the big screen and two simulated mobile phones side-by-side in one window right now!</p>
-          </div>
-          <button onclick="switchView('simulator')" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2">
-            <span>Launch Sandbox</span>
-            <i class="fa-solid fa-flask text-sm"></i>
-          </button>
-        </div>
-
-      </div>
-
-      <!-- Feature Badges -->
-      <div class="pt-4 border-t border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-4 text-center text-slate-400 text-xs">
-        <div class="flex items-center justify-center gap-2">
-          <i class="fa-solid fa-qrcode text-brand-400"></i> Instant QR Join
-        </div>
-        <div class="flex items-center justify-center gap-2">
-          <i class="fa-solid fa-gauge-high text-amber-400"></i> Millisecond Precision
-        </div>
-        <div class="flex items-center justify-center gap-2">
-          <i class="fa-solid fa-shield-halved text-red-400"></i> Anti-Cheat False Start
-        </div>
-        <div class="flex items-center justify-center gap-2">
-          <i class="fa-solid fa-trophy text-emerald-400"></i> Realtime Podium & Points
-        </div>
-      </div>
-    </section>
-
-    <!-- ========================================================================= -->
-    <!-- 2. HOST / PRESENTER BIG SCREEN VIEW -->
-    <!-- ========================================================================= -->
-    <section id="view-host" class="hidden w-full flex-col gap-6">
-      
-      <!-- Top Host Bar -->
-      <div class="bg-slate-800/90 border border-slate-700 rounded-2xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4 shadow-lg">
-        
-        <!-- Room Identity and QR Trigger -->
-        <div class="flex items-center gap-4">
-          <div class="bg-slate-900 border border-slate-700 px-4 py-2 rounded-xl flex items-center gap-3">
-            <span class="text-xs text-slate-400 uppercase tracking-wider font-bold">Room Code</span>
-            <span id="host-room-code-display" class="text-2xl font-black text-brand-400 tracking-wider">BUZZ88</span>
-            <button onclick="copyJoinLink()" title="Copy Link" class="text-slate-400 hover:text-white text-sm ml-1 p-1">
-              <i class="fa-regular fa-copy"></i>
-            </button>
-          </div>
-
-          <div class="flex items-center gap-2 text-sm text-slate-300">
-            <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-            <span id="host-participant-count" class="font-bold text-white">0</span> Players Connected
-          </div>
-        </div>
-
-        <!-- Host Game Controls -->
-        <div class="flex items-center flex-wrap gap-2">
-          <button onclick="toggleQRModal(true)" class="px-3.5 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition flex items-center gap-2">
-            <i class="fa-solid fa-qrcode text-brand-400"></i> Show Large QR
-          </button>
-          <button onclick="resetScores()" class="px-3.5 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm font-semibold transition flex items-center gap-2">
-            <i class="fa-solid fa-rotate-left"></i> Reset Scores
-          </button>
-          <button onclick="openQuestionModal()" class="px-3.5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-sm font-semibold transition flex items-center gap-2 shadow-lg shadow-brand-600/30">
-            <i class="fa-solid fa-plus"></i> New Question
-          </button>
-        </div>
-      </div>
-
-      <!-- Main Stage Grid: Question + Real-Time Buzz Feed -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        <!-- Left 2 Cols: Question Display & Buzzer Status -->
-        <div class="lg:col-span-2 flex flex-col gap-6">
-          
-          <!-- Current Active Question Card -->
-          <div class="bg-gradient-to-br from-slate-800 to-slate-800/90 border border-slate-700 rounded-2xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
-            
-            <!-- Question Category & Mode Pill -->
-            <div class="flex items-center justify-between mb-4">
-              <span id="host-question-category" class="px-3 py-1 rounded-full bg-brand-500/20 border border-brand-500/30 text-brand-300 text-xs font-bold uppercase tracking-wider">
-                Trivia Category
-              </span>
-              <div id="host-state-badge" class="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <i class="fa-solid fa-circle text-[8px]"></i> Ready
-              </div>
-            </div>
-
-            <!-- Question Text -->
-            <h2 id="host-question-text" class="text-2xl sm:text-4xl font-extrabold text-white leading-tight min-h-[5rem] flex items-center">
-              Click "New Question" or "Open Buzzers" to begin round!
-            </h2>
-
-            <!-- Options Grid (if multiple choice) -->
-            <div id="host-options-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6">
-              <!-- Rendered dynamically -->
-            </div>
-
-            <!-- Host Buzzer Control Bar -->
-            <div class="mt-8 pt-6 border-t border-slate-700/80 flex flex-wrap items-center justify-between gap-4">
-              <div class="flex items-center gap-3">
-                <button id="host-unlock-btn" onclick="hostUnlockBuzzers()" class="px-6 py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 font-black text-base shadow-lg shadow-emerald-500/20 transition flex items-center gap-2">
-                  <i class="fa-solid fa-lock-open"></i>
-                  <span>OPEN BUZZERS</span>
-                </button>
-                <button id="host-lock-btn" onclick="hostLockBuzzers()" class="px-5 py-3.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-300 font-bold text-sm transition flex items-center gap-2">
-                  <i class="fa-solid fa-lock"></i>
-                  <span>Lock</span>
-                </button>
-                <button onclick="hostClearBuzzerQueue()" class="px-4 py-3.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold text-sm transition" title="Clear current buzz queue">
-                  <i class="fa-solid fa-broom mr-1"></i> Clear Buzzes
-                </button>
-              </div>
-
-              <!-- Fast Finger Timing Info -->
-              <div id="host-timer-display" class="font-mono text-xl sm:text-2xl font-black text-amber-400 flex items-center gap-2 bg-slate-900/80 px-4 py-2 rounded-xl border border-slate-700">
-                <i class="fa-regular fa-clock text-base"></i>
-                <span id="host-timer-text">0.00s</span>
-              </div>
-            </div>
-
-          </div>
-
-          <!-- Fastest Finger Buzz Log (Leaderboard for this Question) -->
-          <div class="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 shadow-xl">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="font-bold text-lg text-white flex items-center gap-2">
-                <i class="fa-solid fa-bolt text-amber-400"></i>
-                <span>Fast-Finger Response Order</span>
-              </h3>
-              <span class="text-xs text-slate-400">First to buzz gets to answer</span>
-            </div>
-
-            <!-- List of Buzzed Players -->
-            <div id="host-buzz-queue" class="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-              <div class="text-center py-8 text-slate-500 text-sm">
-                Waiting for host to open buzzers and participants to press in...
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-        <!-- Right Column: Live Session Leaderboard & QR Sidebar -->
-        <div class="space-y-6">
-
-          <!-- Mini QR Join Box -->
-          <div class="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 shadow-xl text-center flex flex-col items-center">
-            <h4 class="font-bold text-slate-200 text-sm uppercase tracking-wider mb-2">Scan with Phone</h4>
-            <div id="host-mini-qr" class="p-3 bg-white rounded-xl shadow-inner mb-3"></div>
-            <p class="text-xs text-slate-400">Scan QR or browse to join room:</p>
-            <p class="text-sm font-mono font-bold text-brand-400 mt-1 uppercase" id="host-qr-room-tag">ROOM: BUZZ88</p>
-          </div>
-
-          <!-- Overall Game Scoreboard -->
-          <div class="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 shadow-xl">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="font-bold text-base text-white flex items-center gap-2">
-                <i class="fa-solid fa-trophy text-amber-400"></i>
-                <span>Total Scoreboard</span>
-              </h3>
-              <span id="scoreboard-total-count" class="text-xs bg-slate-700 px-2 py-0.5 rounded-full text-slate-300">0 players</span>
-            </div>
-
-            <div id="host-scoreboard-list" class="space-y-2 max-h-80 overflow-y-auto pr-1">
-              <div class="text-center py-6 text-slate-500 text-xs">
-                No scores recorded yet.
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-      </div>
-
-    </section>
-
-    <!-- ========================================================================= -->
-    <!-- 3. PARTICIPANT / MOBILE PLAYER VIEW -->
-    <!-- ========================================================================= -->
-    <section id="view-player" class="hidden w-full max-w-md mx-auto flex-col gap-5">
-      
-      <!-- Player Join Card (If Not Joined) -->
-      <div id="player-join-card" class="bg-slate-800 border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5">
-        <div class="text-center space-y-2">
-          <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-500 to-red-500 text-slate-950 font-black text-3xl mx-auto flex items-center justify-center shadow-lg shadow-amber-500/20">
-            <i class="fa-solid fa-hand-pointer"></i>
-          </div>
-          <h2 class="text-2xl font-black text-white">Join Quiz Arena</h2>
-          <p class="text-xs text-slate-400">Be ready to tap the buzzer faster than anyone else!</p>
-        </div>
-
-        <form id="player-join-form" onsubmit="handlePlayerJoin(event)" class="space-y-4">
-          <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">Alphanumeric Room Code</label>
-            <input type="text" id="player-input-room" maxlength="8" placeholder="e.g. BUZZ88" required
-              class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-center text-lg font-mono font-bold tracking-widest text-brand-300 uppercase focus:outline-none focus:border-brand-500 transition">
-          </div>
-
-          <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">Your Nickname</label>
-            <input type="text" id="player-input-name" maxlength="20" placeholder="e.g. SpeedDemon" required
-              class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white font-semibold focus:outline-none focus:border-brand-500 transition">
-          </div>
-
-          <!-- Avatar / Color Picker -->
-          <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Pick an Emoji Avatar</label>
-            <div id="player-avatar-selector" class="flex justify-between items-center gap-1.5">
-              <!-- Dynamically populated avatar buttons -->
-            </div>
-          </div>
-
-          <button type="submit" class="w-full py-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-base uppercase tracking-wider shadow-lg shadow-amber-500/20 active:scale-98 transition flex items-center justify-center gap-2">
-            <span>Enter Room</span>
-            <i class="fa-solid fa-arrow-right"></i>
-          </button>
-        </form>
-      </div>
-
-      <!-- Player Active Buzzer Interface (When Joined) -->
-      <div id="player-active-screen" class="hidden flex-col gap-4">
-        
-        <!-- Player Info Header -->
-        <div class="bg-slate-800/90 border border-slate-700 rounded-2xl px-4 py-3 flex items-center justify-between shadow-md">
-          <div class="flex items-center gap-3">
-            <div id="player-hud-avatar" class="w-10 h-10 rounded-xl bg-brand-500/20 border border-brand-500/30 text-2xl flex items-center justify-center">
-              ⚡
-            </div>
-            <div>
-              <div id="player-hud-name" class="font-bold text-white text-sm">Player</div>
-              <div class="text-xs text-slate-400">Score: <span id="player-hud-score" class="text-brand-400 font-bold">0</span> pts</div>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <span id="player-hud-room" class="font-mono text-xs bg-slate-900 border border-slate-700 px-2.5 py-1 rounded-lg text-slate-300 font-bold">
-              BUZZ88
-            </span>
-            <button onclick="handlePlayerLeave()" class="text-xs text-slate-500 hover:text-red-400 p-1.5" title="Leave room">
-              <i class="fa-solid fa-arrow-right-from-bracket"></i>
-            </button>
-          </div>
-        </div>
-
-        <!-- Live Question Hint for Mobile -->
-        <div class="bg-slate-800/80 border border-slate-700 rounded-2xl p-4 text-center">
-          <div id="player-category-pill" class="text-[10px] font-bold text-brand-400 uppercase tracking-widest mb-1">Live Round</div>
-          <div id="player-question-preview" class="text-base font-semibold text-slate-200">
-            Waiting for host question...
-          </div>
-        </div>
-
-        <!-- Big Buzzer Container -->
-        <div class="bg-slate-800/60 border border-slate-700 rounded-3xl p-6 sm:p-8 flex flex-col items-center justify-center relative min-h-[340px]">
-          
-          <!-- Buzzer Status Banner -->
-          <div id="buzzer-status-banner" class="mb-6 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-slate-700 text-slate-300 border border-slate-600 transition">
-            BUZZERS LOCKED
-          </div>
-
-          <!-- THE GIANT 3D BUZZER BUTTON -->
-          <button id="giant-buzzer-btn" onclick="handleBuzzerPress()" 
-            class="tap-shield buzzer-btn buzzer-disabled w-52 h-52 sm:w-60 sm:h-60 rounded-full bg-gradient-to-tr from-red-600 to-red-500 border-4 border-red-400 flex flex-col items-center justify-center text-white relative outline-none focus:outline-none cursor-pointer">
-            <i class="fa-solid fa-hand text-5xl mb-2 drop-shadow-md"></i>
-            <span id="buzzer-label" class="font-black text-2xl tracking-widest uppercase drop-shadow">BUZZ</span>
-            <span id="buzzer-subtext" class="text-[10px] opacity-80 uppercase tracking-wider font-semibold">Touch here</span>
-          </button>
-
-          <!-- Result feedback for player -->
-          <div id="player-feedback-msg" class="mt-6 text-center text-sm font-bold min-h-[1.5rem] transition">
-            <!-- Populated on buzz: "You buzzed in #1! (312ms)" -->
-          </div>
-
-        </div>
-
-        <!-- Optional Multiple Choice Option Buttons for fast answer submission -->
-        <div id="player-mcq-container" class="hidden bg-slate-800/90 border border-slate-700 rounded-2xl p-4 space-y-2.5">
-          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 text-center">Tap Your Answer</div>
-          <div id="player-options-grid" class="grid grid-cols-1 gap-2">
-            <!-- Dynamic choice buttons -->
-          </div>
-        </div>
-
-      </div>
-
-    </section>
-
-    <!-- ========================================================================= -->
-    <!-- 4. LIVE SANDBOX / ARENA SIMULATOR VIEW -->
-    <!-- ========================================================================= -->
-    <section id="view-simulator" class="hidden w-full flex-col gap-6">
-      
-      <div class="bg-brand-900/30 border border-brand-500/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h3 class="font-bold text-white text-base flex items-center gap-2">
-            <i class="fa-solid fa-vial text-emerald-400"></i> Interactive 3-Screen Arena Simulator
-          </h3>
-          <p class="text-xs text-slate-300">
-            Simulate a live game room on this single screen. The Host is on the left; Alice & Bob are on their mobile phones on the right. Tap "Open Buzzers" on the Host, then race to click the phone buzzers!
-          </p>
-        </div>
-        <button onclick="seedSimulatorData()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-2">
-          <i class="fa-solid fa-sparkles"></i> Load Demo Quiz
+          <p class="text-xs text-slate-400">Display QR code, manage buzzers, and track fast-finger reaction times.</p>
         </button>
       </div>
+    </section>
 
-      <!-- Split Layout: Host mini view on left + 2 Mobile Frames on right -->
-      <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        
-        <!-- Left: Simulator Host Controller -->
-        <div class="xl:col-span-7 bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-xl flex flex-col justify-between space-y-4">
-          <div>
-            <div class="flex items-center justify-between pb-3 border-b border-slate-700">
-              <span class="font-bold text-slate-200 text-sm flex items-center gap-2">
-                <i class="fa-solid fa-tv text-brand-400"></i> Host Console (Projector)
-              </span>
-              <span class="font-mono text-xs text-amber-400 font-bold bg-slate-900 px-2.5 py-1 rounded-lg">ROOM: SIM101</span>
-            </div>
-
-            <!-- Sim Question -->
-            <div class="mt-4 p-4 rounded-xl bg-slate-900/80 border border-slate-700">
-              <div class="flex justify-between items-center text-xs text-slate-400 mb-2">
-                <span id="sim-host-category" class="text-brand-400 font-bold">SCIENCE & TECH</span>
-                <span id="sim-host-timer" class="font-mono font-bold text-amber-400">0.00s</span>
-              </div>
-              <h4 id="sim-host-question" class="text-lg font-bold text-white">
-                What is the speed of light in a vacuum (approx in km/s)?
-              </h4>
-            </div>
-
-            <!-- Sim Controls -->
-            <div class="flex flex-wrap gap-2 mt-4">
-              <button onclick="simHostUnlock()" class="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black rounded-xl text-sm transition">
-                <i class="fa-solid fa-lock-open mr-1"></i> OPEN BUZZERS
-              </button>
-              <button onclick="simHostLock()" class="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold rounded-xl text-sm transition">
-                Lock
-              </button>
-              <button onclick="simHostResetQueue()" class="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold rounded-xl text-sm transition">
-                Clear
-              </button>
-              <button onclick="simNextQuestion()" class="px-4 py-2.5 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl text-sm transition">
-                Next Q <i class="fa-solid fa-forward ml-1"></i>
+    <section id="hostView" class="hidden flex-col space-y-6">
+      <!-- Top Host Bar: Room Code & Quick Controls -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Room Invitation Card -->
+        <div class="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl flex items-center space-x-4 shadow-lg">
+          <div id="hostQrCode" class="p-2 bg-white rounded-xl shadow shrink-0"></div>
+          <div class="space-y-1.5 min-w-0">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Room Code</span>
+            <div class="flex items-center space-x-2">
+              <span id="displayRoomCode" class="text-3xl font-black text-amber-400 tracking-wider font-mono">----</span>
+              <button onclick="App.copyJoinLink()" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-md text-slate-300 transition" title="Copy Direct URL">
+                Copy Link
               </button>
             </div>
-          </div>
-
-          <!-- Sim Buzz Queue Log -->
-          <div class="bg-slate-900/90 rounded-xl p-4 border border-slate-700">
-            <h5 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2 flex items-center justify-between">
-              <span>Arrival Timeline (Fastest Finger)</span>
-              <span id="sim-queue-status" class="text-emerald-400">Ready</span>
-            </h5>
-            <div id="sim-buzz-queue" class="space-y-2 min-h-[120px] text-xs">
-              <div class="text-slate-500 text-center py-6">Click "OPEN BUZZERS" then tap on Player 1 or 2's mobile buzzers.</div>
-            </div>
-          </div>
-
-          <!-- Sim Scoreboard -->
-          <div class="flex items-center justify-between text-xs bg-slate-900/60 p-3 rounded-xl border border-slate-700/60">
-            <div class="flex items-center gap-2">
-              <span class="text-slate-400">Alice:</span> <span id="sim-score-alice" class="font-bold text-amber-400">0 pts</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-slate-400">Bob:</span> <span id="sim-score-bob" class="font-bold text-amber-400">0 pts</span>
-            </div>
-            <button onclick="simResetScores()" class="text-slate-500 hover:text-white underline">Reset Scores</button>
+            <p class="text-xs text-slate-400 truncate">Scan QR with phone camera or visit this URL</p>
           </div>
         </div>
 
-        <!-- Right: 2 Simulated Mobile Phones Side by Side -->
-        <div class="xl:col-span-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          
-          <!-- Phone 1: Alice -->
-          <div class="bg-slate-950 border-4 border-slate-700 rounded-[2.5rem] p-4 shadow-2xl flex flex-col justify-between min-h-[460px] relative">
-            <div class="w-20 h-4 bg-slate-800 rounded-full mx-auto mb-2"></div>
-            <div class="flex items-center justify-between text-xs border-b border-slate-800 pb-2">
-              <span class="font-bold text-white">👧 Alice</span>
-              <span id="phone1-status" class="text-red-400 font-bold uppercase text-[10px]">LOCKED</span>
-            </div>
-
-            <!-- Alice Phone Center Buzzer -->
-            <div class="flex flex-col items-center justify-center my-auto py-4">
-              <button id="phone1-buzzer-btn" onclick="simPhoneBuzz('alice')" 
-                class="tap-shield buzzer-btn buzzer-disabled w-36 h-36 rounded-full bg-red-600 border-4 border-red-400 flex flex-col items-center justify-center text-white cursor-pointer active:scale-95 transition">
-                <i class="fa-solid fa-bolt text-2xl mb-1"></i>
-                <span class="font-black text-lg">BUZZ!</span>
-                <span id="phone1-diff" class="text-[10px] font-mono text-amber-300"></span>
-              </button>
-              <div id="phone1-feedback" class="mt-4 text-[11px] font-bold text-slate-300 text-center min-h-[1.2rem]">
-                Ready
+        <!-- Master Buzzer Status Banner -->
+        <div class="lg:col-span-2 bg-slate-900/90 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between shadow-lg">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div id="hostBuzzerStatusIndicator" class="w-4 h-4 rounded-full bg-rose-500 shadow-lg shadow-rose-500/50"></div>
+              <div>
+                <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Buzzer Engine</span>
+                <h3 id="hostBuzzerStatusHeading" class="text-xl font-extrabold text-rose-400">BUZZERS LOCKED</h3>
               </div>
             </div>
-
-            <div class="w-12 h-1 bg-slate-700 rounded-full mx-auto mt-2"></div>
+            
+            <div class="text-right">
+              <span class="text-xs font-semibold text-slate-400 uppercase">Players Online</span>
+              <div id="hostPlayerCountBadge" class="text-2xl font-black text-white">0</div>
+            </div>
           </div>
 
-          <!-- Phone 2: Bob -->
-          <div class="bg-slate-950 border-4 border-slate-700 rounded-[2.5rem] p-4 shadow-2xl flex flex-col justify-between min-h-[460px] relative">
-            <div class="w-20 h-4 bg-slate-800 rounded-full mx-auto mb-2"></div>
-            <div class="flex items-center justify-between text-xs border-b border-slate-800 pb-2">
-              <span class="font-bold text-white">👦 Bob</span>
-              <span id="phone2-status" class="text-red-400 font-bold uppercase text-[10px]">LOCKED</span>
-            </div>
+          <!-- Main Host Action Controls -->
+          <div class="flex flex-wrap items-center gap-3 pt-4">
+            <button id="hostUnlockBtn" onclick="App.hostUnlockBuzzers()" class="flex-1 py-3 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] font-bold text-white shadow-lg shadow-emerald-600/30 transition flex items-center justify-center space-x-2 text-base">
+              <span>🚀</span>
+              <span>UNLOCK BUZZERS (GO!)</span>
+            </button>
+            
+            <button id="hostLockBtn" onclick="App.hostLockBuzzers()" class="py-3 px-5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 font-bold border border-rose-500/30 active:scale-[0.98] transition flex items-center space-x-2">
+              <span>🔒</span>
+              <span>Lock</span>
+            </button>
 
-            <!-- Bob Phone Center Buzzer -->
-            <div class="flex flex-col items-center justify-center my-auto py-4">
-              <button id="phone2-buzzer-btn" onclick="simPhoneBuzz('bob')" 
-                class="tap-shield buzzer-btn buzzer-disabled w-36 h-36 rounded-full bg-red-600 border-4 border-red-400 flex flex-col items-center justify-center text-white cursor-pointer active:scale-95 transition">
-                <i class="fa-solid fa-bolt text-2xl mb-1"></i>
-                <span class="font-black text-lg">BUZZ!</span>
-                <span id="phone2-diff" class="text-[10px] font-mono text-amber-300"></span>
-              </button>
-              <div id="phone2-feedback" class="mt-4 text-[11px] font-bold text-slate-300 text-center min-h-[1.2rem]">
-                Ready
-              </div>
-            </div>
-
-            <div class="w-12 h-1 bg-slate-700 rounded-full mx-auto mt-2"></div>
+            <button onclick="App.hostResetRound()" class="py-3 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] font-semibold text-slate-200 transition flex items-center space-x-2">
+              <span>🔄</span>
+              <span>Reset Round</span>
+            </button>
           </div>
-
         </div>
-
       </div>
 
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Left: Active Question & Buzzed Winner Banner (7 cols) -->
+        <div class="lg:col-span-7 space-y-6">
+          <!-- Live Question Display Card -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 relative overflow-hidden shadow-xl">
+            <div class="flex items-center justify-between mb-4">
+              <span class="text-xs font-bold uppercase tracking-widest text-indigo-400">Current Question</span>
+              <button onclick="App.openQuestionModal()" class="text-xs font-semibold px-3 py-1 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg transition">
+                ✏️ Change / Edit Question
+              </button>
+            </div>
+
+            <h2 id="hostQuestionText" class="text-2xl font-black text-white leading-snug">
+              Waiting for host to prompt the question...
+            </h2>
+
+            <div id="hostQuestionOptionsGrid" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4 hidden">
+              <!-- Dynamically populated options -->
+            </div>
+          </div>
+
+          <!-- Fastest Finger Podium Announcement -->
+          <div id="hostWinnerCard" class="bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-slate-900 border-2 border-amber-500/40 rounded-2xl p-6 shadow-2xl relative">
+            <div class="flex items-start justify-between">
+              <div>
+                <span class="px-2.5 py-1 rounded-full text-[11px] font-extrabold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  ⚡ 1st Buzzer Champion
+                </span>
+                <div class="flex items-center space-x-3 mt-3">
+                  <span id="winnerAvatar" class="text-4xl">👑</span>
+                  <div>
+                    <h3 id="winnerName" class="text-3xl font-black text-white">No buzz yet</h3>
+                    <p id="winnerReactionTime" class="text-sm font-semibold text-amber-400">Awaiting first buzz...</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Host Scoring Decision Buttons -->
+              <div id="hostJudgeControls" class="flex flex-col space-y-2 shrink-0">
+                <button onclick="App.hostJudgeAnswer(true)" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/20 text-sm transition">
+                  ✓ Correct (+10)
+                </button>
+                <button onclick="App.hostJudgeAnswer(false)" class="px-4 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold rounded-xl text-sm transition">
+                  ✕ Pass / Miss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Real-Time Buzzer Queue & Live Scoreboard (5 cols) -->
+        <div class="lg:col-span-5 space-y-6">
+          <!-- Buzzer Queue -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col h-[320px]">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h4 class="font-extrabold text-sm uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                <span>⏱️</span> Arrival Queue
+              </h4>
+              <span id="queueCount" class="text-xs font-bold text-slate-400">0 buzzed</span>
+            </div>
+
+            <div id="buzzerQueueList" class="flex-1 overflow-y-auto divide-y divide-slate-800/60 py-1 space-y-1">
+              <div class="text-center py-10 text-slate-500 text-sm font-medium">
+                No players have buzzed for this round yet.
+              </div>
+            </div>
+          </div>
+
+          <!-- Leaderboard / Scoreboard -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
+              <h4 class="font-extrabold text-sm uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                <span>🏆</span> Room Leaderboard
+              </h4>
+              <button onclick="App.hostResetScores()" class="text-[11px] text-slate-400 hover:text-rose-400 transition font-semibold">
+                Reset Scores
+              </button>
+            </div>
+
+            <div id="hostLeaderboardList" class="space-y-2 max-h-56 overflow-y-auto">
+              <div class="text-center py-6 text-slate-500 text-sm">
+                Players will appear as they join.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="playerView" class="hidden flex-col flex-1 max-w-md mx-auto w-full my-auto space-y-5">
+      
+      <!-- Player Join Form (If Not Yet Joined) -->
+      <div id="playerJoinCard" class="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-2xl space-y-5">
+        <div class="text-center space-y-2">
+          <div class="w-14 h-14 mx-auto rounded-2xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center text-2xl font-black border border-indigo-500/30">
+            🎯
+          </div>
+          <h2 class="text-2xl font-black text-white">Join Competition</h2>
+          <p class="text-xs text-slate-400">Enter your name and the room code shown on the host display.</p>
+        </div>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-400 mb-1.5">Your Name</label>
+            <input id="playerNameInput" type="text" placeholder="e.g. Alex" maxlength="16" class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-semibold focus:outline-none focus:border-indigo-500 transition text-base">
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-400 mb-1.5">Room Code</label>
+            <input id="playerRoomInput" type="text" placeholder="e.g. BUZZ" maxlength="8" class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono uppercase font-black tracking-widest text-center focus:outline-none focus:border-indigo-500 transition text-lg">
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-400 mb-1.5">Choose Avatar</label>
+            <div id="avatarSelector" class="flex justify-between gap-1 p-1 bg-slate-800/80 rounded-xl">
+              <!-- Populated via JS -->
+            </div>
+          </div>
+
+          <button onclick="App.playerSubmitJoin()" class="w-full py-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 font-extrabold text-white text-lg shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition">
+            Join Room
+          </button>
+        </div>
+      </div>
+
+      <!-- Player Active Buzzer Arena (Shown After Joining) -->
+      <div id="playerArenaCard" class="hidden flex-col flex-1 space-y-4">
+        
+        <!-- Player Info & Score Pill -->
+        <div class="flex items-center justify-between bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl shadow">
+          <div class="flex items-center space-x-2.5">
+            <span id="playerSelfAvatar" class="text-2xl">🦁</span>
+            <div>
+              <div id="playerSelfName" class="font-extrabold text-white text-sm">Player</div>
+              <div id="playerRoomBadge" class="text-[11px] font-mono text-slate-400">Room: ----</div>
+            </div>
+          </div>
+
+          <div class="text-right">
+            <span class="text-[10px] font-bold text-slate-400 uppercase">Score</span>
+            <div id="playerSelfScore" class="text-xl font-black text-amber-400">0 pts</div>
+          </div>
+        </div>
+
+        <!-- Question Prompt Banner on Mobile -->
+        <div id="playerQuestionBox" class="bg-slate-900/80 border border-slate-800 p-4 rounded-2xl text-center">
+          <span class="text-[10px] font-bold uppercase text-indigo-400 tracking-wider">Question</span>
+          <p id="playerQuestionText" class="text-sm font-semibold text-slate-200 mt-1 leading-snug">
+            Look at the host screen for questions!
+          </p>
+        </div>
+
+        <!-- Massive Interactive Buzzer Button -->
+        <div class="flex-1 flex flex-col items-center justify-center py-4">
+          <button id="mobileBuzzerBtn" onclick="App.playerTapBuzzer()" class="buzzer-btn w-64 h-64 sm:w-72 sm:h-72 rounded-full flex flex-col items-center justify-center bg-gradient-to-b from-rose-500 to-rose-700 text-white font-black transition relative focus:outline-none select-none">
+            <span id="buzzerIcon" class="text-6xl sm:text-7xl mb-1 filter drop-shadow-md">🔒</span>
+            <span id="buzzerLabel" class="text-xl sm:text-2xl font-extrabold tracking-wider uppercase drop-shadow">LOCKED</span>
+            <span id="buzzerSubLabel" class="text-xs opacity-80 mt-1 font-medium">Wait for host</span>
+          </button>
+        </div>
+
+        <!-- Mobile Multiple Choice Options (If Question has choices & player buzzed) -->
+        <div id="playerChoicesPanel" class="hidden grid grid-cols-2 gap-2 pt-2">
+          <!-- Dynamically added choices -->
+        </div>
+
+        <!-- Feedback & False Start Alert Toast -->
+        <div id="playerFeedbackAlert" class="py-2.5 px-4 rounded-xl text-center text-xs font-bold bg-slate-900 border border-slate-800 text-slate-400">
+          Ready for the next round
+        </div>
+      </div>
     </section>
 
   </main>
 
-  <!-- ========================================================================= -->
-  <!-- MODALS: QR CODE PRESENTATION MODAL -->
-  <!-- ========================================================================= -->
-  <div id="modal-qr" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl text-center relative animate-bounce-short">
-      <button onclick="toggleQRModal(false)" class="absolute top-4 right-4 text-slate-400 hover:text-white p-2 text-lg">
-        <i class="fa-solid fa-xmark"></i>
-      </button>
-
-      <div class="w-12 h-12 rounded-2xl bg-brand-500/20 text-brand-400 flex items-center justify-center text-2xl mx-auto mb-3">
-        <i class="fa-solid fa-qrcode"></i>
-      </div>
-      <h3 class="text-2xl font-black text-white">Join Quiz on Phone</h3>
-      <p class="text-sm text-slate-400 mb-6">Scan with your smartphone camera or type the code:</p>
-
-      <div class="flex justify-center mb-6">
-        <div id="modal-qr-canvas-box" class="p-4 bg-white rounded-2xl shadow-xl"></div>
+  <div id="questionModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="font-extrabold text-lg text-white">Set Round Question</h3>
+        <button onclick="App.closeQuestionModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
       </div>
 
-      <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 flex items-center justify-between">
+      <div class="space-y-3">
         <div>
-          <span class="text-xs text-slate-400 block uppercase">Room Code</span>
-          <span id="modal-qr-code-text" class="text-2xl font-mono font-black text-brand-400">BUZZ88</span>
-        </div>
-        <button onclick="copyJoinLink()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold rounded-xl transition flex items-center gap-2">
-          <i class="fa-solid fa-copy"></i> Copy Link
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ========================================================================= -->
-  <!-- MODALS: NEW QUESTION EDITOR MODAL -->
-  <!-- ========================================================================= -->
-  <div id="modal-question" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative">
-      <button onclick="closeQuestionModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white p-2">
-        <i class="fa-solid fa-xmark"></i>
-      </button>
-
-      <h3 class="text-xl font-black text-white mb-1 flex items-center gap-2">
-        <i class="fa-solid fa-circle-question text-brand-400"></i>
-        <span>Create or Pick Question</span>
-      </h3>
-      <p class="text-xs text-slate-400 mb-4">Choose from quick preset questions or write your own custom prompt.</p>
-
-      <!-- Preset Question Dropdown -->
-      <div class="mb-4">
-        <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">Load from Bank</label>
-        <select id="question-preset-select" onchange="loadPresetQuestion()" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-brand-500">
-          <option value="">-- Select a Question Preset --</option>
-          <option value="1">Trivia: Tallest mountain above sea level?</option>
-          <option value="2">Science: Primary gas found in Earth's atmosphere?</option>
-          <option value="3">Tech: Who is widely regarded as the first computer programmer?</option>
-          <option value="4">Pop Culture: What color pill does Neo swallow in The Matrix?</option>
-          <option value="5">Geography: What is the capital of Australia?</option>
-          <option value="6">Speed Math: What is 17 x 8?</option>
-        </select>
-      </div>
-
-      <form id="custom-question-form" onsubmit="handleSaveCustomQuestion(event)" class="space-y-3">
-        <div>
-          <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">Category</label>
-          <input type="text" id="input-q-cat" placeholder="e.g. Science, Speed Math, Trivia" required
-            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
+          <label class="block text-xs font-bold uppercase text-slate-400 mb-1">Question Prompt</label>
+          <textarea id="modalQuestionInput" rows="2" class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"></textarea>
         </div>
 
         <div>
-          <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">Question Prompt</label>
-          <textarea id="input-q-text" rows="2" placeholder="e.g. Which planet has the most moons?" required
-            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500"></textarea>
+          <label class="block text-xs font-bold uppercase text-slate-400 mb-1">Multiple Choice (Optional - leave empty for open buzzer)</label>
+          <div class="grid grid-cols-2 gap-2">
+            <input id="choiceOptA" type="text" placeholder="Option A" class="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white">
+            <input id="choiceOptB" type="text" placeholder="Option B" class="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white">
+            <input id="choiceOptC" type="text" placeholder="Option C" class="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white">
+            <input id="choiceOptD" type="text" placeholder="Option D" class="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white">
+          </div>
         </div>
 
-        <div>
-          <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">Optional Multiple Choices (comma-separated)</label>
-          <input type="text" id="input-q-options" placeholder="e.g. Jupiter, Saturn, Uranus, Mars (Leave blank for buzzer-only voice answer)"
-            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
+        <div class="pt-2">
+          <span class="text-xs text-slate-400 font-semibold mb-2 block">Or pick from sample trivia:</span>
+          <div class="flex flex-wrap gap-1.5">
+            <button onclick="App.fillSampleQuestion(0)" class="text-[11px] px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300">🪐 Solar System</button>
+            <button onclick="App.fillSampleQuestion(1)" class="text-[11px] px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300">⚡ Speed Math</button>
+            <button onclick="App.fillSampleQuestion(2)" class="text-[11px] px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300">🌍 Geography</button>
+          </div>
         </div>
+      </div>
 
-        <div class="pt-2 flex justify-end gap-2">
-          <button type="button" onclick="closeQuestionModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-semibold">Cancel</button>
-          <button type="submit" class="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-sm font-bold shadow-lg shadow-brand-600/30">Set Live Question</button>
-        </div>
-      </form>
+      <div class="flex justify-end gap-3 pt-3 border-t border-slate-800">
+        <button onclick="App.closeQuestionModal()" class="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-semibold text-sm">Cancel</button>
+        <button onclick="App.saveQuestionModal()" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-600/30">Broadcast Question</button>
+      </div>
     </div>
   </div>
 
   <script>
-    /* =========================================================================
-     * CORE STATE & SYSTEM ARCHITECTURE
-     * ========================================================================= */
-    const APP_STATE = {
-      currentView: 'landing',
-      roomCode: 'BUZZ88',
-      audioEnabled: true,
+    /**
+     * BuzzFast Real-Time Architecture
+     * Uses Public WebSocket MQTT Brokers with automatic failover so mobile phones 
+     * and laptops sync over the internet with sub-50ms latency with ZERO backend config.
+     */
+    const App = {
+      // Configuration & State
+      mode: 'SELECT', // 'HOST' | 'PLAYER' | 'SELECT'
+      roomCode: '',
+      playerId: '',
+      playerName: '',
+      playerAvatar: '🦊',
+      soundEnabled: true,
       
-      // Host State
-      host: {
-        status: 'LOCKED', // 'LOCKED' | 'OPEN' | 'COUNTDOWN'
-        unlockTimestamp: null,
-        buzzQueue: [], // [{ id, name, avatar, timestamp, diffMs, answered, score }]
-        scores: {}, // { playerName: score }
-        participants: new Set(),
-        currentQuestion: {
-          category: 'General Trivia',
-          text: 'Welcome to BuzzFast! Click "Open Buzzers" to start.',
-          options: []
+      // Live Synchronized Game State
+      gameState: {
+        status: 'LOCKED', // 'LOCKED' | 'UNLOCKED' | 'BUZZED'
+        question: 'Ready for Round 1! Host will unlock buzzers.',
+        options: [],
+        unlockTimestamp: 0,
+        buzzQueue: [], // [{ playerId, name, avatar, time, deltaMs }]
+        scores: {},    // { [name]: number }
+        activeQuestionId: 1
+      },
+
+      // Network Client
+      mqttClient: null,
+      mqttTopic: '',
+      audioCtxReady: false,
+
+      // Sample trivia presets
+      sampleQuestions: [
+        {
+          q: "What is the hottest planet in our Solar System?",
+          opts: ["Mercury", "Venus", "Mars", "Jupiter"]
         },
-        timerInterval: null,
+        {
+          q: "Speed Math: What is 17 × 4?",
+          opts: ["58", "68", "72", "64"]
+        },
+        {
+          q: "Which country has the longest coastline in the world?",
+          opts: ["Russia", "Canada", "Australia", "Indonesia"]
+        }
+      ],
+
+      avatars: ['🦊', '🦁', '🚀', '⚡', '🐯', '🐼', '🦄', '🦅'],
+
+      init() {
+        this.bindEvents();
+        this.renderAvatarSelector();
+
+        // Check if user followed a QR link with ?room=XYZ or #room=XYZ
+        const urlParams = new URLSearchParams(window.location.search);
+        const hash = window.location.hash.replace('#', '');
+        const hashParams = new URLSearchParams(hash);
+        const autoRoom = urlParams.get('room') || hashParams.get('room');
+
+        if (autoRoom) {
+          document.getElementById('playerRoomInput').value = autoRoom.toUpperCase();
+          this.switchToPlayerMode();
+        }
       },
 
-      // Mobile Player State
-      player: {
-        id: 'user_' + Math.random().toString(36).substr(2, 6),
-        name: '',
-        avatar: '⚡',
-        room: '',
-        isJoined: false,
-        hasBuzzed: false,
-        buzzRank: null,
-        buzzTimeMs: null,
-        falseStartPenaltyUntil: 0
+      bindEvents() {
+        document.getElementById('soundToggleBtn').addEventListener('click', () => {
+          this.soundEnabled = !this.soundEnabled;
+          document.getElementById('soundIcon').textContent = this.soundEnabled ? '🔊' : '🔇';
+        });
+
+        // Spacebar shortcut for host to unlock/lock
+        window.addEventListener('keydown', (e) => {
+          if (this.mode === 'HOST' && e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+            e.preventDefault();
+            if (this.gameState.status === 'UNLOCKED') {
+              this.hostLockBuzzers();
+            } else {
+              this.hostUnlockBuzzers();
+            }
+          }
+        });
       },
 
-      // Arena Simulator State
-      sim: {
-        hostState: 'LOCKED',
-        unlockTime: null,
-        timerInterval: null,
-        buzzes: [],
-        scores: { alice: 0, bob: 0 },
-        questionIndex: 0
-      }
-    };
+      renderAvatarSelector() {
+        const container = document.getElementById('avatarSelector');
+        container.innerHTML = '';
+        this.avatars.forEach(emoji => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = `p-2 rounded-lg text-lg transition ${emoji === this.playerAvatar ? 'bg-indigo-600 scale-110 shadow' : 'hover:bg-slate-700'}`;
+          btn.textContent = emoji;
+          btn.onclick = () => {
+            this.playerAvatar = emoji;
+            this.renderAvatarSelector();
+          };
+          container.appendChild(btn);
+        });
+      },
 
-    // BroadcastChannel for instant multi-tab sync across browser windows/tabs
-    let syncChannel = null;
-    try {
-      syncChannel = new BroadcastChannel('buzzfast_broadcast_bus');
-      syncChannel.onmessage = handleBroadcastMessage;
-    } catch (e) {
-      console.warn('BroadcastChannel not supported in this iframe, falling back to local simulation', e);
-    }
+      connectNetwork(room) {
+        this.roomCode = room.toUpperCase().trim();
+        this.mqttTopic = `buzzfast/v3/${this.roomCode}`;
 
-    /* =========================================================================
-     * SOUND ENGINE (Synthesized via Tone.js - zero external audio files)
-     * ========================================================================= */
-    let synthBuzzer = null;
-    let synthDing = null;
-    let synthFanfare = null;
-    let audioInitialized = false;
+        this.updateNetStatus('Connecting...', 'amber');
 
-    function initAudio() {
-      if (audioInitialized) return;
-      try {
-        if (typeof Tone !== 'undefined') {
-          // Buzzer sound (sawtooth with short envelope)
-          synthBuzzer = new Tone.Synth({
-            oscillator: { type: 'sawtooth' },
-            envelope: { attack: 0.005, decay: 0.15, sustain: 0, release: 0.1 }
-          }).toDestination();
-
-          // Correct answer chime (triangle pleasant ping)
-          synthDing = new Tone.PolySynth(Tone.Synth, {
-            oscillator: { type: 'triangle' },
-            envelope: { attack: 0.01, decay: 0.4, sustain: 0.1, release: 0.3 }
-          }).toDestination();
-
-          Tone.start();
-          audioInitialized = true;
-        }
-      } catch (err) {
-        console.warn('Web Audio init skipped:', err);
-      }
-    }
-
-    function playSound(type) {
-      if (!APP_STATE.audioEnabled) return;
-      initAudio();
-      try {
-        if (type === 'buzz') {
-          synthBuzzer?.triggerAttackRelease('A3', '8n');
-        } else if (type === 'open') {
-          synthDing?.triggerAttackRelease(['C5', 'G5'], '16n');
-        } else if (type === 'first') {
-          synthDing?.triggerAttackRelease(['E5', 'B5'], '8n');
-        } else if (type === 'correct') {
-          synthDing?.triggerAttackRelease(['C5', 'E5', 'G5', 'C6'], '8n');
-        } else if (type === 'wrong') {
-          synthBuzzer?.triggerAttackRelease('D#2', '4n');
-        }
-      } catch (e) {}
-    }
-
-    function toggleAudio() {
-      APP_STATE.audioEnabled = !APP_STATE.audioEnabled;
-      const icon = document.getElementById('audio-icon');
-      if (APP_STATE.audioEnabled) {
-        icon.className = 'fa-solid fa-volume-high';
-        showToast('Sound Effects Enabled', 'info');
-      } else {
-        icon.className = 'fa-solid fa-volume-xmark text-slate-500';
-        showToast('Sound Effects Muted', 'info');
-      }
-    }
-
-    /* =========================================================================
-     * VIEW NAVIGATION & ROUTING
-     * ========================================================================= */
-    function switchView(viewName) {
-      APP_STATE.currentView = viewName;
-      ['landing', 'host', 'player', 'simulator'].forEach(v => {
-        const el = document.getElementById(`view-${v}`);
-        const btn = document.getElementById(`nav-btn-${v}`);
-        if (v === viewName) {
-          el.classList.remove('hidden');
-          el.classList.add('flex');
-          if (btn) {
-            btn.classList.add('bg-slate-700', 'text-white');
-            btn.classList.remove('text-slate-300');
+        // Using reliable, public, SSL-secured WebSocket MQTT brokers
+        // Automatically attempts HiveMQ public broker, with fallback capability
+        const brokerUrl = 'wss://broker.hivemq.com:8884/mqtt';
+        
+        try {
+          if (this.mqttClient) {
+            this.mqttClient.end();
           }
-        } else {
-          el.classList.add('hidden');
-          el.classList.remove('flex');
-          if (btn) {
-            btn.classList.remove('bg-slate-700', 'text-white');
-            btn.classList.add('text-slate-300');
-          }
+
+          const clientId = 'bf_' + Math.random().toString(16).substring(2, 10);
+          this.mqttClient = mqtt.connect(brokerUrl, {
+            clientId: clientId,
+            clean: true,
+            connectTimeout: 7000,
+            reconnectPeriod: 3000
+          });
+
+          this.mqttClient.on('connect', () => {
+            this.updateNetStatus('🟢 Live Relay Connected', 'emerald');
+            this.mqttClient.subscribe(this.mqttTopic, { qos: 1 });
+
+            if (this.mode === 'PLAYER') {
+              // Announce join to host
+              this.broadcastMsg({
+                type: 'PLAYER_JOIN',
+                playerId: this.playerId,
+                name: this.playerName,
+                avatar: this.playerAvatar
+              });
+            } else if (this.mode === 'HOST') {
+              // Broadcast current state to all existing devices
+              this.hostBroadcastState();
+            }
+          });
+
+          this.mqttClient.on('message', (topic, payload) => {
+            try {
+              const msg = JSON.parse(payload.toString());
+              this.handleNetworkMessage(msg);
+            } catch (err) {
+              console.error('JSON parsing error:', err);
+            }
+          });
+
+          this.mqttClient.on('error', () => {
+            this.updateNetStatus('Connection Error - Retrying', 'rose');
+          });
+
+          this.mqttClient.on('offline', () => {
+            this.updateNetStatus('Offline (Reconnecting...)', 'amber');
+          });
+
+        } catch (e) {
+          console.error("MQTT setup error:", e);
+          this.updateNetStatus('Relay Failed', 'rose');
         }
-      });
+      },
 
-      if (viewName === 'host') {
-        renderHostQR();
-        updateHostUI();
-      } else if (viewName === 'simulator') {
-        renderSimUI();
-      }
-    }
-
-    // Check URL parameters for direct room joining (?room=CODE&role=player)
-    function checkUrlParameters() {
-      const params = new URLSearchParams(window.location.search);
-      const room = params.get('room') || params.get('r');
-      const role = params.get('role');
-
-      if (room) {
-        APP_STATE.roomCode = room.toUpperCase();
-        document.getElementById('player-input-room').value = APP_STATE.roomCode;
-      }
-      if (role === 'player') {
-        switchView('player');
-      } else if (role === 'host') {
-        switchView('host');
-      }
-    }
-
-    /* =========================================================================
-     * BROADCAST MESSAGE EVENT BUS (Multi-window / Multi-tab sync)
-     * ========================================================================= */
-    function broadcast(action, payload) {
-      if (syncChannel) {
-        syncChannel.postMessage({ action, payload, sender: APP_STATE.player.id });
-      }
-    }
-
-    function handleBroadcastMessage(event) {
-      const { action, payload } = event.data;
-
-      // Host receives player joining
-      if (action === 'PLAYER_JOINED') {
-        if (payload.room === APP_STATE.roomCode) {
-          APP_STATE.host.participants.add(payload.name);
-          updateHostUI();
-          showToast(`${payload.avatar} ${payload.name} joined the room!`, 'info');
+      broadcastMsg(data) {
+        if (this.mqttClient && this.mqttClient.connected) {
+          this.mqttClient.publish(this.mqttTopic, JSON.stringify(data), { qos: 1 });
         }
-      }
+      },
 
-      // Host receives buzz
-      if (action === 'PLAYER_BUZZED') {
-        if (payload.room === APP_STATE.roomCode && APP_STATE.host.status === 'OPEN') {
-          registerHostBuzz(payload);
+      handleNetworkMessage(msg) {
+        switch (msg.type) {
+          case 'HOST_STATE':
+            // Players sync full state from host
+            if (this.mode === 'PLAYER') {
+              this.gameState = msg.state;
+              this.playerRenderState();
+            }
+            break;
+
+          case 'PLAYER_JOIN':
+            // Host records player in leaderboard
+            if (this.mode === 'HOST') {
+              if (this.gameState.scores[msg.name] === undefined) {
+                this.gameState.scores[msg.name] = 0;
+              }
+              this.playSound('join');
+              this.hostRenderLeaderboard();
+              // Reply with authoritative state so player updates immediately
+              this.hostBroadcastState();
+            }
+            break;
+
+          case 'BUZZ':
+            // Host receives player buzz event
+            if (this.mode === 'HOST') {
+              this.hostProcessBuzz(msg);
+            }
+            break;
+
+          case 'RESET_SCORES':
+            if (this.mode === 'PLAYER') {
+              this.gameState.scores = {};
+              this.playerRenderState();
+            }
+            break;
         }
-      }
+      },
 
-      // Players receive host state updates
-      if (action === 'HOST_STATE_UPDATE') {
-        if (payload.room === APP_STATE.player.room) {
-          APP_STATE.host.status = payload.status;
-          APP_STATE.host.unlockTimestamp = payload.unlockTimestamp;
-          APP_STATE.host.currentQuestion = payload.question;
+      updateNetStatus(text, color) {
+        const pill = document.getElementById('netStatusPill');
+        const span = document.getElementById('netStatusText');
+        span.textContent = text;
+        
+        pill.className = `flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-semibold ${
+          color === 'emerald' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
+          color === 'rose' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' :
+          'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+        }`;
+      },
 
-          // Sync mobile player screen
-          updatePlayerBuzzerVisuals(payload.status, payload.question);
-        }
-      }
+      switchToHostMode() {
+        this.mode = 'HOST';
+        document.getElementById('roleSelectView').classList.add('hidden');
+        document.getElementById('hostView').classList.remove('hidden');
+        document.getElementById('hostView').classList.add('flex');
 
-      // Players receive round reset
-      if (action === 'ROUND_RESET') {
-        if (payload.room === APP_STATE.player.room) {
-          APP_STATE.player.hasBuzzed = false;
-          APP_STATE.player.buzzRank = null;
-          updatePlayerBuzzerVisuals(APP_STATE.host.status, APP_STATE.host.currentQuestion);
-        }
-      }
-    }
+        // Generate 4-letter alphanumeric room code
+        const code = Math.random().toString(36).substring(2, 6).toUpperCase();
+        document.getElementById('displayRoomCode').textContent = code;
 
-    /* =========================================================================
-     * HOST SYSTEM LOGIC & QR CODE GENERATION
-     * ========================================================================= */
-    let miniQRObject = null;
-    let modalQRObject = null;
-
-    function renderHostQR() {
-      const baseUrl = window.location.origin + window.location.pathname;
-      const joinUrl = `${baseUrl}?role=player&room=${APP_STATE.roomCode}`;
-
-      document.getElementById('host-room-code-display').innerText = APP_STATE.roomCode;
-      document.getElementById('host-qr-room-tag').innerText = `ROOM: ${APP_STATE.roomCode}`;
-      document.getElementById('modal-qr-code-text').innerText = APP_STATE.roomCode;
-
-      // Render Mini QR in sidebar
-      const miniContainer = document.getElementById('host-mini-qr');
-      miniContainer.innerHTML = '';
-      if (typeof QRCode !== 'undefined') {
-        miniQRObject = new QRCode(miniContainer, {
+        // Render QR Code
+        const joinUrl = `${window.location.origin}${window.location.pathname}#room=${code}`;
+        const qrContainer = document.getElementById('hostQrCode');
+        qrContainer.innerHTML = '';
+        new QRCode(qrContainer, {
           text: joinUrl,
-          width: 140,
-          height: 140,
-          colorDark: "#0f172a",
+          width: 84,
+          height: 84,
+          colorDark: "#020617",
           colorLight: "#ffffff",
           correctLevel: QRCode.CorrectLevel.M
         });
 
-        // Render Large Modal QR
-        const modalContainer = document.getElementById('modal-qr-canvas-box');
-        modalContainer.innerHTML = '';
-        modalQRObject = new QRCode(modalContainer, {
-          text: joinUrl,
-          width: 240,
-          height: 240,
-          colorDark: "#0f172a",
-          colorLight: "#ffffff",
-          correctLevel: QRCode.CorrectLevel.H
+        this.connectNetwork(code);
+      },
+
+      switchToPlayerMode() {
+        this.mode = 'PLAYER';
+        document.getElementById('roleSelectView').classList.add('hidden');
+        document.getElementById('playerView').classList.remove('hidden');
+        document.getElementById('playerView').classList.add('flex');
+      },
+
+      copyJoinLink() {
+        const link = `${window.location.origin}${window.location.pathname}#room=${this.roomCode}`;
+        const input = document.createElement('input');
+        input.value = link;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        
+        const pill = document.getElementById('netStatusText');
+        const old = pill.textContent;
+        pill.textContent = "✓ Link Copied!";
+        setTimeout(() => pill.textContent = old, 2000);
+      },
+
+      hostUnlockBuzzers() {
+        this.initAudioContext();
+        this.gameState.status = 'UNLOCKED';
+        this.gameState.unlockTimestamp = Date.now();
+        this.gameState.buzzQueue = [];
+        
+        this.playSound('unlock');
+        this.hostUpdateDisplay();
+        this.hostBroadcastState();
+      },
+
+      hostLockBuzzers() {
+        this.gameState.status = 'LOCKED';
+        this.playSound('lock');
+        this.hostUpdateDisplay();
+        this.hostBroadcastState();
+      },
+
+      hostResetRound() {
+        this.gameState.status = 'LOCKED';
+        this.gameState.buzzQueue = [];
+        this.hostUpdateDisplay();
+        this.hostBroadcastState();
+      },
+
+      hostProcessBuzz(data) {
+        // Ignore buzzes if locked or player already buzzed
+        if (this.gameState.status === 'LOCKED') return;
+
+        const alreadyInQueue = this.gameState.buzzQueue.some(b => b.name === data.name);
+        if (alreadyInQueue) return;
+
+        const delta = Math.max(0, data.timestamp - this.gameState.unlockTimestamp);
+        const buzzRecord = {
+          playerId: data.playerId,
+          name: data.name,
+          avatar: data.avatar,
+          time: data.timestamp,
+          deltaMs: delta
+        };
+
+        const isFirst = this.gameState.buzzQueue.length === 0;
+        this.gameState.buzzQueue.push(buzzRecord);
+
+        if (isFirst) {
+          this.gameState.status = 'BUZZED';
+          this.playSound('buzzFirst');
+          
+          if (window.confetti) {
+            confetti({
+              particleCount: 50,
+              spread: 60,
+              origin: { y: 0.6 }
+            });
+          }
+        } else {
+          this.playSound('buzzQueue');
+        }
+
+        this.hostUpdateDisplay();
+        this.hostBroadcastState();
+      },
+
+      hostBroadcastState() {
+        this.broadcastMsg({
+          type: 'HOST_STATE',
+          state: this.gameState
         });
-      }
-    }
+      },
 
-    function toggleQRModal(show) {
-      const modal = document.getElementById('modal-qr');
-      if (show) {
-        modal.classList.remove('hidden');
-        renderHostQR();
-      } else {
-        modal.classList.add('hidden');
-      }
-    }
+      hostJudgeAnswer(isCorrect) {
+        if (this.gameState.buzzQueue.length === 0) return;
+        const winner = this.gameState.buzzQueue[0];
 
-    function copyJoinLink() {
-      const baseUrl = window.location.origin + window.location.pathname;
-      const joinUrl = `${baseUrl}?role=player&room=${APP_STATE.roomCode}`;
+        if (isCorrect) {
+          this.gameState.scores[winner.name] = (this.gameState.scores[winner.name] || 0) + 10;
+          this.playSound('correct');
+          if (window.confetti) {
+            confetti({ particleCount: 100, spread: 70, origin: { y: 0.5 } });
+          }
+          this.hostResetRound();
+        } else {
+          // Pass: remove 1st buzz and allow 2nd person in queue to answer
+          this.playSound('wrong');
+          this.gameState.buzzQueue.shift();
+          if (this.gameState.buzzQueue.length > 0) {
+            this.hostUpdateDisplay();
+            this.hostBroadcastState();
+          } else {
+            // No one left in queue, unlock buzzers again
+            this.hostUnlockBuzzers();
+          }
+        }
+        this.hostRenderLeaderboard();
+      },
 
-      const tempInput = document.createElement('input');
-      tempInput.value = joinUrl;
-      document.body.appendChild(tempInput);
-      tempInput.select();
-      document.execCommand('copy');
-      document.body.removeChild(tempInput);
+      hostResetScores() {
+        for (let player in this.gameState.scores) {
+          this.gameState.scores[player] = 0;
+        }
+        this.hostRenderLeaderboard();
+        this.broadcastMsg({ type: 'RESET_SCORES' });
+      },
 
-      showToast(`Copied room link: ${APP_STATE.roomCode}`, 'success');
-    }
+      hostUpdateDisplay() {
+        const statusHeading = document.getElementById('hostBuzzerStatusHeading');
+        const statusIndicator = document.getElementById('hostBuzzerStatusIndicator');
+        const unlockBtn = document.getElementById('hostUnlockBtn');
 
-    function hostUnlockBuzzers() {
-      APP_STATE.host.status = 'OPEN';
-      APP_STATE.host.unlockTimestamp = Date.now();
-      APP_STATE.host.buzzQueue = [];
-      playSound('open');
+        if (this.gameState.status === 'UNLOCKED') {
+          statusHeading.textContent = "BUZZERS LIVE (GO!)";
+          statusHeading.className = "text-xl font-extrabold text-emerald-400";
+          statusIndicator.className = "w-4 h-4 rounded-full bg-emerald-400 pulse-glow";
+          unlockBtn.classList.add('opacity-50', 'pointer-events-none');
+        } else if (this.gameState.status === 'BUZZED') {
+          statusHeading.textContent = "PLAYER BUZZED!";
+          statusHeading.className = "text-xl font-extrabold text-amber-400";
+          statusIndicator.className = "w-4 h-4 rounded-full bg-amber-400";
+          unlockBtn.classList.remove('opacity-50', 'pointer-events-none');
+        } else {
+          statusHeading.textContent = "BUZZERS LOCKED";
+          statusHeading.className = "text-xl font-extrabold text-rose-400";
+          statusIndicator.className = "w-4 h-4 rounded-full bg-rose-500 shadow-lg shadow-rose-500/50";
+          unlockBtn.classList.remove('opacity-50', 'pointer-events-none');
+        }
 
-      // Start Host Timer
-      clearInterval(APP_STATE.host.timerInterval);
-      const timerEl = document.getElementById('host-timer-text');
-      APP_STATE.host.timerInterval = setInterval(() => {
-        const elapsed = ((Date.now() - APP_STATE.host.unlockTimestamp) / 1000).toFixed(2);
-        timerEl.innerText = `${elapsed}s`;
-      }, 50);
+        // Render Winner Card
+        const winnerCard = document.getElementById('hostWinnerCard');
+        const winner = this.gameState.buzzQueue[0];
 
-      broadcast('HOST_STATE_UPDATE', {
-        room: APP_STATE.roomCode,
-        status: 'OPEN',
-        unlockTimestamp: APP_STATE.host.unlockTimestamp,
-        question: APP_STATE.host.currentQuestion
-      });
+        if (winner) {
+          winnerCard.classList.remove('opacity-50');
+          document.getElementById('winnerAvatar').textContent = winner.avatar;
+          document.getElementById('winnerName').textContent = winner.name;
+          document.getElementById('winnerReactionTime').textContent = `Reaction time: +${(winner.deltaMs / 1000).toFixed(3)}s`;
+          document.getElementById('hostJudgeControls').classList.remove('hidden');
+        } else {
+          winnerCard.classList.add('opacity-50');
+          document.getElementById('winnerAvatar').textContent = '👑';
+          document.getElementById('winnerName').textContent = this.gameState.status === 'UNLOCKED' ? 'Waiting for buzz...' : 'Buzzers Locked';
+          document.getElementById('winnerReactionTime').textContent = this.gameState.status === 'UNLOCKED' ? 'Fastest finger takes it!' : 'Hit Unlock to open';
+          document.getElementById('hostJudgeControls').classList.add('hidden');
+        }
 
-      broadcast('ROUND_RESET', { room: APP_STATE.roomCode });
-      updateHostUI();
-      showToast('Buzzers are now UNLOCKED! Players can buzz!', 'info');
-    }
+        // Render Queue
+        const queueList = document.getElementById('buzzerQueueList');
+        const queueCount = document.getElementById('queueCount');
+        queueCount.textContent = `${this.gameState.buzzQueue.length} buzzed`;
 
-    function hostLockBuzzers() {
-      APP_STATE.host.status = 'LOCKED';
-      clearInterval(APP_STATE.host.timerInterval);
-      
-      broadcast('HOST_STATE_UPDATE', {
-        room: APP_STATE.roomCode,
-        status: 'LOCKED',
-        question: APP_STATE.host.currentQuestion
-      });
-
-      updateHostUI();
-      showToast('Buzzers Locked', 'info');
-    }
-
-    function hostClearBuzzerQueue() {
-      APP_STATE.host.buzzQueue = [];
-      clearInterval(APP_STATE.host.timerInterval);
-      document.getElementById('host-timer-text').innerText = '0.00s';
-      updateHostUI();
-      broadcast('ROUND_RESET', { room: APP_STATE.roomCode });
-    }
-
-    function registerHostBuzz(playerData) {
-      // Avoid duplicate buzzes in queue
-      if (APP_STATE.host.buzzQueue.some(b => b.name === playerData.name)) return;
-
-      const diffMs = playerData.timestamp - APP_STATE.host.unlockTimestamp;
-      const rank = APP_STATE.host.buzzQueue.length + 1;
-      
-      APP_STATE.host.buzzQueue.push({
-        id: playerData.id,
-        name: playerData.name,
-        avatar: playerData.avatar,
-        timestamp: playerData.timestamp,
-        diffMs: Math.max(0, diffMs),
-        answered: null
-      });
-
-      if (rank === 1) {
-        playSound('first');
-        confetti({ particleCount: 30, spread: 60, origin: { y: 0.6 } });
-      } else {
-        playSound('buzz');
-      }
-
-      updateHostUI();
-    }
-
-    function awardPoints(index, points) {
-      const item = APP_STATE.host.buzzQueue[index];
-      if (!item) return;
-
-      item.answered = points > 0 ? 'correct' : 'incorrect';
-      APP_STATE.host.scores[item.name] = (APP_STATE.host.scores[item.name] || 0) + points;
-
-      if (points > 0) {
-        playSound('correct');
-        confetti({ particleCount: 80, spread: 80 });
-        showToast(`+${points} points awarded to ${item.name}!`, 'success');
-      } else {
-        playSound('wrong');
-        showToast(`Marked incorrect for ${item.name}`, 'info');
-      }
-
-      updateHostUI();
-    }
-
-    function resetScores() {
-      APP_STATE.host.scores = {};
-      updateHostUI();
-      showToast('Scores reset to 0', 'info');
-    }
-
-    function updateHostUI() {
-      // Update counts & status badges
-      document.getElementById('host-participant-count').innerText = APP_STATE.host.participants.size;
-      const badge = document.getElementById('host-state-badge');
-      if (APP_STATE.host.status === 'OPEN') {
-        badge.className = 'px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 animate-pulse';
-        badge.innerHTML = '<i class="fa-solid fa-bolt text-[10px]"></i> BUZZERS OPEN';
-      } else {
-        badge.className = 'px-3 py-1 rounded-full bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5';
-        badge.innerHTML = '<i class="fa-solid fa-lock text-[10px]"></i> LOCKED';
-      }
-
-      // Update question view
-      document.getElementById('host-question-category').innerText = APP_STATE.host.currentQuestion.category;
-      document.getElementById('host-question-text').innerText = APP_STATE.host.currentQuestion.text;
-
-      // Update multiple choice buttons on host
-      const optGrid = document.getElementById('host-options-grid');
-      optGrid.innerHTML = '';
-      if (APP_STATE.host.currentQuestion.options && APP_STATE.host.currentQuestion.options.length > 0) {
-        APP_STATE.host.currentQuestion.options.forEach((opt, idx) => {
-          const letter = String.fromCharCode(65 + idx);
-          const btn = document.createElement('div');
-          btn.className = 'p-3 bg-slate-900/80 border border-slate-700 rounded-xl text-slate-200 text-sm font-semibold flex items-center gap-2';
-          btn.innerHTML = `<span class="w-6 h-6 rounded-lg bg-brand-500/20 text-brand-300 font-mono font-bold flex items-center justify-center text-xs">${letter}</span> <span>${opt}</span>`;
-          optGrid.appendChild(btn);
-        });
-      }
-
-      // Update Buzz Queue
-      const queueEl = document.getElementById('host-buzz-queue');
-      if (APP_STATE.host.buzzQueue.length === 0) {
-        queueEl.innerHTML = `
-          <div class="text-center py-8 text-slate-500 text-sm">
-            ${APP_STATE.host.status === 'OPEN' ? '⚡ Buzzers are OPEN! Waiting for first responder...' : 'Waiting for host to open buzzers...'}
-          </div>
-        `;
-      } else {
-        queueEl.innerHTML = '';
-        APP_STATE.host.buzzQueue.forEach((b, idx) => {
-          const isFirst = idx === 0;
-          const diffSeconds = (b.diffMs / 1000).toFixed(3);
-          const item = document.createElement('div');
-          item.className = `p-3 rounded-xl border flex items-center justify-between transition ${
-            isFirst 
-              ? 'bg-amber-500/10 border-amber-500/40 shadow-lg shadow-amber-500/5' 
-              : 'bg-slate-900/80 border-slate-700/80'
-          }`;
-
-          item.innerHTML = `
-            <div class="flex items-center gap-3">
-              <span class="w-8 h-8 rounded-xl ${isFirst ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-800 text-slate-300 font-bold'} flex items-center justify-center text-sm shadow">
-                ${isFirst ? '🥇 #1' : `#${idx + 1}`}
-              </span>
-              <span class="text-xl">${b.avatar}</span>
-              <div>
-                <div class="font-bold text-white text-sm flex items-center gap-2">
-                  <span>${b.name}</span>
-                  ${isFirst ? '<span class="text-[10px] bg-amber-500/20 text-amber-400 font-bold px-2 py-0.5 rounded-full border border-amber-500/30 uppercase">Fastest Finger</span>' : ''}
-                </div>
-                <div class="text-xs font-mono text-slate-400">
-                  +${diffSeconds}s
-                </div>
+        if (this.gameState.buzzQueue.length === 0) {
+          queueList.innerHTML = `<div class="text-center py-10 text-slate-500 text-sm font-medium">No buzzes recorded for this round.</div>`;
+        } else {
+          queueList.innerHTML = this.gameState.buzzQueue.map((b, idx) => `
+            <div class="flex items-center justify-between py-2.5 px-3 rounded-xl ${idx === 0 ? 'bg-amber-500/15 border border-amber-500/30' : 'bg-slate-800/40'}">
+              <div class="flex items-center space-x-2.5">
+                <span class="w-5 text-center font-black text-xs ${idx === 0 ? 'text-amber-400' : 'text-slate-400'}">#${idx + 1}</span>
+                <span class="text-lg">${b.avatar}</span>
+                <span class="font-bold text-sm text-white">${b.name}</span>
               </div>
+              <span class="text-xs font-mono font-semibold ${idx === 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}">+${(b.deltaMs / 1000).toFixed(3)}s</span>
             </div>
+          `).join('');
+        }
 
-            <!-- Host Grading Buttons -->
-            <div class="flex items-center gap-1.5">
-              ${b.answered === 'correct' 
-                ? '<span class="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-bold"><i class="fa-solid fa-check mr-1"></i>Correct (+10)</span>' 
-                : b.answered === 'incorrect' 
-                ? '<span class="px-2.5 py-1 rounded-lg bg-red-500/20 text-red-400 text-xs font-bold"><i class="fa-solid fa-xmark mr-1"></i>Passed</span>'
-                : `
-                  <button onclick="awardPoints(${idx}, 10)" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 font-black text-xs rounded-lg transition" title="Correct (+10 pts)">
-                    <i class="fa-solid fa-check"></i> Correct
-                  </button>
-                  <button onclick="awardPoints(${idx}, 0)" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 active:scale-95 text-slate-300 font-bold text-xs rounded-lg transition" title="Incorrect (Pass to next)">
-                    <i class="fa-solid fa-xmark"></i> Pass
-                  </button>
-                `
-              }
+        this.hostRenderLeaderboard();
+      },
+
+      hostRenderLeaderboard() {
+        const list = document.getElementById('hostLeaderboardList');
+        const players = Object.keys(this.gameState.scores);
+        document.getElementById('hostPlayerCountBadge').textContent = players.length;
+
+        if (players.length === 0) {
+          list.innerHTML = `<div class="text-center py-6 text-slate-500 text-sm">Players will appear as they join.</div>`;
+          return;
+        }
+
+        // Sort descending by score
+        players.sort((a, b) => this.gameState.scores[b] - this.gameState.scores[a]);
+
+        list.innerHTML = players.map((name, index) => `
+          <div class="flex items-center justify-between px-3 py-2 bg-slate-800/60 rounded-xl">
+            <div class="flex items-center space-x-2">
+              <span class="text-xs font-black ${index === 0 ? 'text-amber-400' : 'text-slate-500'}">#${index + 1}</span>
+              <span class="text-sm font-semibold text-white">${name}</span>
             </div>
-          `;
-          queueEl.appendChild(item);
+            <span class="text-sm font-mono font-black text-amber-400">${this.gameState.scores[name]} pts</span>
+          </div>
+        `).join('');
+      },
+
+      playerSubmitJoin() {
+        const nameInput = document.getElementById('playerNameInput');
+        const roomInput = document.getElementById('playerRoomInput');
+
+        const name = nameInput.value.trim();
+        const room = roomInput.value.trim().toUpperCase();
+
+        if (!name || !room) {
+          nameInput.classList.add('shake-anim');
+          setTimeout(() => nameInput.classList.remove('shake-anim'), 500);
+          return;
+        }
+
+        this.initAudioContext();
+        this.playerName = name;
+        this.roomCode = room;
+        this.playerId = 'ply_' + Math.random().toString(36).substring(2, 9);
+
+        document.getElementById('playerJoinCard').classList.add('hidden');
+        document.getElementById('playerArenaCard').classList.remove('hidden');
+        document.getElementById('playerArenaCard').classList.add('flex');
+
+        document.getElementById('playerSelfName').textContent = this.playerName;
+        document.getElementById('playerSelfAvatar').textContent = this.playerAvatar;
+        document.getElementById('playerRoomBadge').textContent = `Room: ${this.roomCode}`;
+
+        this.connectNetwork(this.roomCode);
+      },
+
+      playerTapBuzzer() {
+        this.initAudioContext();
+
+        // 1. False start penalty if locked
+        if (this.gameState.status === 'LOCKED') {
+          this.playSound('falseStart');
+          const btn = document.getElementById('mobileBuzzerBtn');
+          btn.classList.add('shake-anim');
+          setTimeout(() => btn.classList.remove('shake-anim'), 400);
+
+          const alert = document.getElementById('playerFeedbackAlert');
+          alert.textContent = "⚠️ False Start! Buzzer is locked by host.";
+          alert.className = "py-2.5 px-4 rounded-xl text-center text-xs font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40";
+          setTimeout(() => {
+            alert.textContent = "Wait for host to unlock...";
+            alert.className = "py-2.5 px-4 rounded-xl text-center text-xs font-bold bg-slate-900 border border-slate-800 text-slate-400";
+          }, 1500);
+          return;
+        }
+
+        // 2. Already buzzed in this round?
+        const alreadyBuzzed = this.gameState.buzzQueue.some(b => b.name === this.playerName);
+        if (alreadyBuzzed) return;
+
+        // 3. Send high-speed timestamped buzz event
+        if (navigator.vibrate) {
+          navigator.vibrate(80);
+        }
+
+        this.broadcastMsg({
+          type: 'BUZZ',
+          playerId: this.playerId,
+          name: this.playerName,
+          avatar: this.playerAvatar,
+          timestamp: Date.now()
         });
+      },
+
+      playerRenderState() {
+        const btn = document.getElementById('mobileBuzzerBtn');
+        const icon = document.getElementById('buzzerIcon');
+        const label = document.getElementById('buzzerLabel');
+        const subLabel = document.getElementById('buzzerSubLabel');
+        const alert = document.getElementById('playerFeedbackAlert');
+        const scoreVal = this.gameState.scores[this.playerName] || 0;
+
+        document.getElementById('playerSelfScore').textContent = `${scoreVal} pts`;
+        document.getElementById('playerQuestionText').textContent = this.gameState.question || "Look at the host screen!";
+
+        const myBuzz = this.gameState.buzzQueue.find(b => b.name === this.playerName);
+        const myIndex = this.gameState.buzzQueue.findIndex(b => b.name === this.playerName);
+
+        if (myBuzz) {
+          // Player successfully buzzed in!
+          if (myIndex === 0) {
+            btn.className = "buzzer-btn w-64 h-64 sm:w-72 sm:h-72 rounded-full flex flex-col items-center justify-center bg-gradient-to-b from-amber-400 to-amber-600 text-slate-950 font-black relative pulse-glow";
+            icon.textContent = "👑";
+            label.textContent = "#1 BUZZED!";
+            subLabel.textContent = "You're first to answer!";
+            alert.textContent = "You buzzed first! Speak your answer to the host.";
+            alert.className = "py-2.5 px-4 rounded-xl text-center text-xs font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40";
+          } else {
+            btn.className = "buzzer-btn w-64 h-64 sm:w-72 sm:h-72 rounded-full flex flex-col items-center justify-center bg-gradient-to-b from-slate-700 to-slate-800 text-slate-300 font-black relative";
+            icon.textContent = "⏱️";
+            label.textContent = `#${myIndex + 1} QUEUED`;
+            subLabel.textContent = `+${(myBuzz.deltaMs / 1000).toFixed(2)}s behind #1`;
+            alert.textContent = `Buzzed! You are #${myIndex + 1} in line.`;
+            alert.className = "py-2.5 px-4 rounded-xl text-center text-xs font-semibold bg-slate-900 border border-slate-800 text-slate-300";
+          }
+        } else if (this.gameState.status === 'UNLOCKED') {
+          // Live & ready to tap
+          btn.className = "buzzer-btn w-64 h-64 sm:w-72 sm:h-72 rounded-full flex flex-col items-center justify-center bg-gradient-to-b from-emerald-400 to-emerald-600 text-white font-black pulse-glow";
+          icon.textContent = "⚡";
+          label.textContent = "TAP TO BUZZ!";
+          subLabel.textContent = "Fastest finger wins!";
+          alert.textContent = "🟢 BUZZERS ARE OPEN! TAP NOW!";
+          alert.className = "py-2.5 px-4 rounded-xl text-center text-xs font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40";
+        } else if (this.gameState.status === 'BUZZED') {
+          // Another player buzzed first
+          const firstBuzzer = this.gameState.buzzQueue[0];
+          btn.className = "buzzer-btn w-64 h-64 sm:w-72 sm:h-72 rounded-full flex flex-col items-center justify-center bg-gradient-to-b from-slate-800 to-slate-900 text-slate-400 font-bold";
+          icon.textContent = "🔒";
+          label.textContent = "TAKEN!";
+          subLabel.textContent = `${firstBuzzer ? firstBuzzer.name : 'Someone'} buzzed first`;
+          alert.textContent = `${firstBuzzer ? firstBuzzer.name : 'Another player'} locked the buzzer.`;
+          alert.className = "py-2.5 px-4 rounded-xl text-center text-xs font-semibold bg-slate-900 border border-slate-800 text-slate-400";
+        } else {
+          // Locked
+          btn.className = "buzzer-btn w-64 h-64 sm:w-72 sm:h-72 rounded-full flex flex-col items-center justify-center bg-gradient-to-b from-rose-600 to-rose-800 text-white font-black";
+          icon.textContent = "🔒";
+          label.textContent = "LOCKED";
+          subLabel.textContent = "Wait for host to unlock";
+          alert.textContent = "Waiting for host to unlock round...";
+          alert.className = "py-2.5 px-4 rounded-xl text-center text-xs font-bold bg-slate-900 border border-slate-800 text-slate-400";
+        }
+      },
+
+      openQuestionModal() {
+        document.getElementById('questionModal').classList.remove('hidden');
+        document.getElementById('modalQuestionInput').value = this.gameState.question;
+      },
+
+      closeQuestionModal() {
+        document.getElementById('questionModal').classList.add('hidden');
+      },
+
+      fillSampleQuestion(idx) {
+        const item = this.sampleQuestions[idx];
+        if (!item) return;
+        document.getElementById('modalQuestionInput').value = item.q;
+        document.getElementById('choiceOptA').value = item.opts[0] || '';
+        document.getElementById('choiceOptB').value = item.opts[1] || '';
+        document.getElementById('choiceOptC').value = item.opts[2] || '';
+        document.getElementById('choiceOptD').value = item.opts[3] || '';
+      },
+
+      saveQuestionModal() {
+        const q = document.getElementById('modalQuestionInput').value.trim();
+        if (q) {
+          this.gameState.question = q;
+          document.getElementById('hostQuestionText').textContent = q;
+          this.hostResetRound();
+        }
+        this.closeQuestionModal();
+      },
+
+      initAudioContext() {
+        if (!this.audioCtxReady && window.Tone) {
+          Tone.start();
+          this.audioCtxReady = true;
+        }
+      },
+
+      playSound(type) {
+        if (!this.soundEnabled || !window.Tone || !this.audioCtxReady) return;
+
+        try {
+          const now = Tone.now();
+          if (type === 'unlock') {
+            const synth = new Tone.Synth({ oscillator: { type: 'sine' } }).toDestination();
+            synth.triggerAttackRelease("C5", "16n", now);
+            synth.triggerAttackRelease("G5", "16n", now + 0.08);
+          } else if (type === 'lock') {
+            const synth = new Tone.Synth({ oscillator: { type: 'triangle' } }).toDestination();
+            synth.triggerAttackRelease("E4", "16n", now);
+            synth.triggerAttackRelease("C4", "16n", now + 0.07);
+          } else if (type === 'buzzFirst') {
+            const synth = new Tone.Synth({
+              oscillator: { type: 'sawtooth' },
+              envelope: { attack: 0.005, decay: 0.2, sustain: 0.1, release: 0.1 }
+            }).toDestination();
+            synth.triggerAttackRelease("A4", "8n", now);
+            synth.triggerAttackRelease("E5", "8n", now + 0.09);
+          } else if (type === 'correct') {
+            const poly = new Tone.PolySynth().toDestination();
+            poly.triggerAttackRelease(["C5", "E5", "G5", "C6"], "8n", now);
+          } else if (type === 'falseStart') {
+            const synth = new Tone.Synth({ oscillator: { type: 'square' } }).toDestination();
+            synth.triggerAttackRelease("G3", "16n", now);
+          }
+        } catch (e) {
+          console.debug("Audio play skipped", e);
+        }
       }
-
-      // Update Overall Scoreboard
-      const scoreListEl = document.getElementById('host-scoreboard-list');
-      const sortedScores = Object.entries(APP_STATE.host.scores).sort((a, b) => b[1] - a[1]);
-      document.getElementById('scoreboard-total-count').innerText = `${sortedScores.length} ranked`;
-
-      if (sortedScores.length === 0) {
-        scoreListEl.innerHTML = '<div class="text-center py-6 text-slate-500 text-xs">No points recorded yet.</div>';
-      } else {
-        scoreListEl.innerHTML = '';
-        sortedScores.forEach(([name, pts], index) => {
-          const row = document.createElement('div');
-          row.className = 'flex items-center justify-between p-2.5 bg-slate-900/60 rounded-xl border border-slate-700/60 text-xs';
-          row.innerHTML = `
-            <div class="flex items-center gap-2">
-              <span class="font-bold ${index === 0 ? 'text-amber-400' : 'text-slate-400'}">#${index + 1}</span>
-              <span class="font-semibold text-white">${name}</span>
-            </div>
-            <span class="font-mono font-bold text-brand-400">${pts} pts</span>
-          `;
-          scoreListEl.appendChild(row);
-        });
-      }
-    }
-
-    /* =========================================================================
-     * QUESTION MANAGER & PRESETS
-     * ========================================================================= */
-    const QUESTION_PRESETS = {
-      "1": { cat: "World Geography", text: "What is the tallest mountain above sea level on Earth?", options: ["Mount Everest", "K2", "Kangchenjunga", "Kilimanjaro"] },
-      "2": { cat: "Earth Science", text: "Which gas makes up roughly 78% of Earth's atmosphere?", options: ["Nitrogen", "Oxygen", "Carbon Dioxide", "Argon"] },
-      "3": { cat: "Computer History", text: "Who wrote the first algorithm intended to be processed by a machine?", options: ["Ada Lovelace", "Alan Turing", "Charles Babbage", "Grace Hopper"] },
-      "4": { cat: "Pop Culture", text: "What color pill does Neo take in the 1999 movie 'The Matrix'?", options: ["Red Pill", "Blue Pill", "Green Pill", "Yellow Pill"] },
-      "5": { cat: "Geography", text: "What is the official capital city of Australia?", options: ["Canberra", "Sydney", "Melbourne", "Brisbane"] },
-      "6": { cat: "Speed Math", text: "Fast mental arithmetic: What is 17 multiplied by 8?", options: ["136", "126", "144", "138"] }
     };
 
-    function openQuestionModal() {
-      document.getElementById('modal-question').classList.remove('hidden');
-    }
-    function closeQuestionModal() {
-      document.getElementById('modal-question').classList.add('hidden');
-    }
-
-    function loadPresetQuestion() {
-      const val = document.getElementById('question-preset-select').value;
-      if (!val || !QUESTION_PRESETS[val]) return;
-      const q = QUESTION_PRESETS[val];
-      document.getElementById('input-q-cat').value = q.cat;
-      document.getElementById('input-q-text').value = q.text;
-      document.getElementById('input-q-options').value = q.options.join(', ');
-    }
-
-    function handleSaveCustomQuestion(e) {
-      e.preventDefault();
-      const cat = document.getElementById('input-q-cat').value.trim();
-      const text = document.getElementById('input-q-text').value.trim();
-      const rawOpts = document.getElementById('input-q-options').value.trim();
-      const options = rawOpts ? rawOpts.split(',').map(o => o.trim()).filter(Boolean) : [];
-
-      APP_STATE.host.currentQuestion = { category: cat, text, options };
-      APP_STATE.host.buzzQueue = [];
-      closeQuestionModal();
-      updateHostUI();
-      showToast('New question set on screen!', 'success');
-
-      broadcast('HOST_STATE_UPDATE', {
-        room: APP_STATE.roomCode,
-        status: APP_STATE.host.status,
-        question: APP_STATE.host.currentQuestion
-      });
-    }
-
-    /* =========================================================================
-     * MOBILE PLAYER CLIENT LOGIC
-     * ========================================================================= */
-    const AVATAR_OPTIONS = ['⚡', '🚀', '🦁', '🦊', '🎯', '🔥', '👾'];
-
-    function setupAvatarSelector() {
-      const container = document.getElementById('player-avatar-selector');
-      container.innerHTML = '';
-      AVATAR_OPTIONS.forEach((emoji, idx) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = `w-9 h-9 rounded-xl text-lg flex items-center justify-center transition ${
-          emoji === APP_STATE.player.avatar 
-            ? 'bg-brand-600 border-2 border-brand-400 scale-110 shadow' 
-            : 'bg-slate-800 hover:bg-slate-700'
-        }`;
-        btn.innerText = emoji;
-        btn.onclick = () => {
-          APP_STATE.player.avatar = emoji;
-          setupAvatarSelector();
-        };
-        container.appendChild(btn);
-      });
-    }
-
-    function handlePlayerJoin(e) {
-      e.preventDefault();
-      const room = document.getElementById('player-input-room').value.trim().toUpperCase();
-      const name = document.getElementById('player-input-name').value.trim();
-      if (!room || !name) return;
-
-      APP_STATE.player.room = room;
-      APP_STATE.player.name = name;
-      APP_STATE.player.isJoined = true;
-
-      // Update Player HUD
-      document.getElementById('player-hud-avatar').innerText = APP_STATE.player.avatar;
-      document.getElementById('player-hud-name').innerText = APP_STATE.player.name;
-      document.getElementById('player-hud-room').innerText = APP_STATE.player.room;
-
-      document.getElementById('player-join-card').classList.add('hidden');
-      document.getElementById('player-active-screen').classList.remove('hidden');
-      document.getElementById('player-active-screen').classList.add('flex');
-
-      // Notify host and other tabs
-      broadcast('PLAYER_JOINED', {
-        id: APP_STATE.player.id,
-        name: APP_STATE.player.name,
-        avatar: APP_STATE.player.avatar,
-        room: APP_STATE.player.room
-      });
-
-      // Also add to host's local set if running in same page
-      if (room === APP_STATE.roomCode) {
-        APP_STATE.host.participants.add(name);
-        updateHostUI();
-      }
-
-      showToast(`Joined Room ${room}! Ready your finger!`, 'success');
-      updatePlayerBuzzerVisuals(APP_STATE.host.status, APP_STATE.host.currentQuestion);
-    }
-
-    function handlePlayerLeave() {
-      APP_STATE.player.isJoined = false;
-      document.getElementById('player-active-screen').classList.add('hidden');
-      document.getElementById('player-active-screen').classList.remove('flex');
-      document.getElementById('player-join-card').classList.remove('hidden');
-    }
-
-    function handleBuzzerPress() {
-      if (!APP_STATE.player.isJoined) return;
-
-      const now = Date.now();
-
-      // Check for active False-Start penalty lockout
-      if (now < APP_STATE.player.falseStartPenaltyUntil) {
-        const remainingSec = Math.ceil((APP_STATE.player.falseStartPenaltyUntil - now) / 1000);
-        showToast(`False start penalty! Locked for ${remainingSec}s`, 'error');
-        playSound('wrong');
-        return;
-      }
-
-      // Check if buzzers are currently locked by Host
-      if (APP_STATE.host.status !== 'OPEN') {
-        // FALSE START PENALTY! Lock player for 3 seconds
-        APP_STATE.player.falseStartPenaltyUntil = now + 2500;
-        playSound('wrong');
-        
-        const feedback = document.getElementById('player-feedback-msg');
-        feedback.innerText = '⚠️ False Start! Buzzed too early! (2.5s Lockout)';
-        feedback.className = 'mt-6 text-center text-xs font-bold text-red-400';
-        
-        // Haptic rumble
-        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-        return;
-      }
-
-      // Prevent multiple buzzes per round
-      if (APP_STATE.player.hasBuzzed) {
-        showToast('You have already buzzed for this question!', 'info');
-        return;
-      }
-
-      // Valid low-latency buzz!
-      APP_STATE.player.hasBuzzed = true;
-      const buzzTimestamp = now;
-      const diffMs = buzzTimestamp - (APP_STATE.host.unlockTimestamp || buzzTimestamp);
-
-      // Trigger tactile haptic feedback on real phone
-      if (navigator.vibrate) navigator.vibrate(80);
-      playSound('buzz');
-
-      const payload = {
-        id: APP_STATE.player.id,
-        name: APP_STATE.player.name,
-        avatar: APP_STATE.player.avatar,
-        room: APP_STATE.player.room,
-        timestamp: buzzTimestamp,
-        diffMs: diffMs
-      };
-
-      // Broadcast to Host
-      broadcast('PLAYER_BUZZED', payload);
-
-      // If playing on same machine/browser host:
-      if (APP_STATE.player.room === APP_STATE.roomCode) {
-        registerHostBuzz(payload);
-      }
-
-      // Feedback animation on player screen
-      const buzzerBtn = document.getElementById('giant-buzzer-btn');
-      buzzerBtn.classList.add('pressed');
-      
-      const feedback = document.getElementById('player-feedback-msg');
-      feedback.innerHTML = `🚀 <span class="text-brand-400">BUZZED!</span> (${(diffMs / 1000).toFixed(3)}s)`;
-      feedback.className = 'mt-6 text-center text-sm font-bold text-emerald-400 animate-pulse';
-
-      // Reveal multiple choice options if question has them
-      renderPlayerMCQOptions();
-    }
-
-    function updatePlayerBuzzerVisuals(hostStatus, question) {
-      const banner = document.getElementById('buzzer-status-banner');
-      const btn = document.getElementById('giant-buzzer-btn');
-      const label = document.getElementById('buzzer-label');
-      const preview = document.getElementById('player-question-preview');
-      const catPill = document.getElementById('player-category-pill');
-
-      if (question) {
-        preview.innerText = question.text;
-        catPill.innerText = question.category || 'LIVE QUESTION';
-      }
-
-      if (hostStatus === 'OPEN') {
-        banner.innerText = '⚡ BUZZERS ACTIVE - PRESS NOW!';
-        banner.className = 'mb-6 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-500 text-slate-950 border border-emerald-400 shadow-lg shadow-emerald-500/20 animate-pulse';
-
-        btn.classList.remove('buzzer-disabled');
-        label.innerText = 'BUZZ!';
-      } else {
-        banner.innerText = '🔒 BUZZERS LOCKED';
-        banner.className = 'mb-6 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-slate-700 text-slate-300 border border-slate-600';
-
-        btn.classList.add('buzzer-disabled');
-        label.innerText = 'WAIT';
-      }
-
-      if (!APP_STATE.player.hasBuzzed) {
-        document.getElementById('player-feedback-msg').innerText = '';
-        document.getElementById('player-mcq-container').classList.add('hidden');
-      }
-    }
-
-    function renderPlayerMCQOptions() {
-      const container = document.getElementById('player-mcq-container');
-      const grid = document.getElementById('player-options-grid');
-      const options = APP_STATE.host.currentQuestion.options;
-
-      if (!options || options.length === 0) {
-        container.classList.add('hidden');
-        return;
-      }
-
-      container.classList.remove('hidden');
-      grid.innerHTML = '';
-      options.forEach((opt, idx) => {
-        const letter = String.fromCharCode(65 + idx);
-        const btn = document.createElement('button');
-        btn.className = 'w-full p-3 rounded-xl bg-slate-900 border border-slate-700 hover:border-brand-500 text-white font-semibold text-sm text-left flex items-center gap-3 transition active:bg-brand-600';
-        btn.innerHTML = `<span class="w-7 h-7 rounded-lg bg-brand-500/20 text-brand-300 font-mono font-bold flex items-center justify-center text-xs">${letter}</span> <span>${opt}</span>`;
-        btn.onclick = () => {
-          showToast(`Answer "${opt}" selected!`, 'info');
-          container.classList.add('hidden');
-          document.getElementById('player-feedback-msg').innerHTML += ` <span class="text-slate-300 text-xs">Choice: ${letter}</span>`;
-        };
-        grid.appendChild(btn);
-      });
-    }
-
-    /* =========================================================================
-     * ARENA SIMULATOR ENGINE (Side-by-Side testing)
-     * ========================================================================= */
-    const SIM_QUESTIONS = [
-      { cat: "Science & Tech", text: "What is the speed of light in a vacuum (approx in km/s)?" },
-      { cat: "World History", text: "In which year did the Apollo 11 spacecraft land on the Moon?" },
-      { cat: "Pop Culture", text: "Which wizard school does Harry Potter attend?" },
-      { cat: "Geography", text: "What is the longest river in South America?" }
-    ];
-
-    function seedSimulatorData() {
-      APP_STATE.sim.questionIndex = 0;
-      APP_STATE.sim.scores = { alice: 0, bob: 0 };
-      simLoadQuestion();
-      showToast('Demo Quiz loaded into Arena Simulator', 'success');
-    }
-
-    function simLoadQuestion() {
-      const q = SIM_QUESTIONS[APP_STATE.sim.questionIndex];
-      document.getElementById('sim-host-category').innerText = q.cat;
-      document.getElementById('sim-host-question').innerText = q.text;
-      simHostResetQueue();
-    }
-
-    function simNextQuestion() {
-      APP_STATE.sim.questionIndex = (APP_STATE.sim.questionIndex + 1) % SIM_QUESTIONS.length;
-      simLoadQuestion();
-    }
-
-    function simHostUnlock() {
-      APP_STATE.sim.hostState = 'OPEN';
-      APP_STATE.sim.unlockTime = Date.now();
-      APP_STATE.sim.buzzes = [];
-
-      clearInterval(APP_STATE.sim.timerInterval);
-      const timerEl = document.getElementById('sim-host-timer');
-      APP_STATE.sim.timerInterval = setInterval(() => {
-        const elapsed = ((Date.now() - APP_STATE.sim.unlockTime) / 1000).toFixed(2);
-        timerEl.innerText = `${elapsed}s`;
-      }, 50);
-
-      renderSimUI();
-      playSound('open');
-      showToast('Simulator Buzzers OPEN! Tap Alice or Bob\'s buzzer!', 'info');
-    }
-
-    function simHostLock() {
-      APP_STATE.sim.hostState = 'LOCKED';
-      clearInterval(APP_STATE.sim.timerInterval);
-      renderSimUI();
-    }
-
-    function simHostResetQueue() {
-      APP_STATE.sim.buzzes = [];
-      APP_STATE.sim.hostState = 'LOCKED';
-      clearInterval(APP_STATE.sim.timerInterval);
-      document.getElementById('sim-host-timer').innerText = '0.00s';
-      renderSimUI();
-    }
-
-    function simResetScores() {
-      APP_STATE.sim.scores = { alice: 0, bob: 0 };
-      renderSimUI();
-    }
-
-    function simPhoneBuzz(playerKey) {
-      const now = Date.now();
-      const feedbackEl = document.getElementById(`phone${playerKey === 'alice' ? 1 : 2}-feedback`);
-
-      if (APP_STATE.sim.hostState !== 'OPEN') {
-        playSound('wrong');
-        feedbackEl.innerText = '⚠️ False start! Locked!';
-        feedbackEl.className = 'mt-4 text-[11px] font-bold text-red-400 text-center';
-        return;
-      }
-
-      if (APP_STATE.sim.buzzes.some(b => b.player === playerKey)) {
-        return;
-      }
-
-      const diffMs = now - APP_STATE.sim.unlockTime;
-      const rank = APP_STATE.sim.buzzes.length + 1;
-      
-      APP_STATE.sim.buzzes.push({
-        player: playerKey,
-        name: playerKey === 'alice' ? 'Alice' : 'Bob',
-        avatar: playerKey === 'alice' ? '👧' : '👦',
-        diffMs: diffMs,
-        rank: rank
-      });
-
-      if (rank === 1) {
-        playSound('first');
-        confetti({ particleCount: 40, spread: 60, origin: { x: playerKey === 'alice' ? 0.75 : 0.9 } });
-        feedbackEl.innerHTML = `🥇 <span class="text-emerald-400">1st Place!</span> (${(diffMs / 1000).toFixed(3)}s)`;
-      } else {
-        playSound('buzz');
-        feedbackEl.innerHTML = `🥈 <span class="text-slate-300">2nd Place</span> (+${(diffMs / 1000).toFixed(3)}s)`;
-      }
-
-      renderSimUI();
-    }
-
-    function simAwardPoints(playerKey, pts) {
-      APP_STATE.sim.scores[playerKey] = (APP_STATE.sim.scores[playerKey] || 0) + pts;
-      playSound(pts > 0 ? 'correct' : 'wrong');
-      renderSimUI();
-    }
-
-    function renderSimUI() {
-      // Update phone 1 & 2 status badges
-      const p1Status = document.getElementById('phone1-status');
-      const p2Status = document.getElementById('phone2-status');
-      const p1Btn = document.getElementById('phone1-buzzer-btn');
-      const p2Btn = document.getElementById('phone2-buzzer-btn');
-
-      if (APP_STATE.sim.hostState === 'OPEN') {
-        p1Status.innerText = 'ACTIVE';
-        p1Status.className = 'text-emerald-400 font-bold uppercase text-[10px] animate-pulse';
-        p2Status.innerText = 'ACTIVE';
-        p2Status.className = 'text-emerald-400 font-bold uppercase text-[10px] animate-pulse';
-
-        p1Btn.classList.remove('buzzer-disabled');
-        p2Btn.classList.remove('buzzer-disabled');
-      } else {
-        p1Status.innerText = 'LOCKED';
-        p1Status.className = 'text-red-400 font-bold uppercase text-[10px]';
-        p2Status.innerText = 'LOCKED';
-        p2Status.className = 'text-red-400 font-bold uppercase text-[10px]';
-
-        p1Btn.classList.add('buzzer-disabled');
-        p2Btn.classList.add('buzzer-disabled');
-      }
-
-      // Update simulator queue
-      const queueEl = document.getElementById('sim-buzz-queue');
-      const statusTag = document.getElementById('sim-queue-status');
-      statusTag.innerText = APP_STATE.sim.hostState === 'OPEN' ? '⚡ BUZZERS OPEN' : 'LOCKED';
-      statusTag.className = APP_STATE.sim.hostState === 'OPEN' ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold';
-
-      if (APP_STATE.sim.buzzes.length === 0) {
-        queueEl.innerHTML = '<div class="text-slate-500 text-center py-6">Click "OPEN BUZZERS" then tap on Player 1 or 2\'s mobile buzzers.</div>';
-      } else {
-        queueEl.innerHTML = '';
-        APP_STATE.sim.buzzes.forEach((b, idx) => {
-          const item = document.createElement('div');
-          item.className = `p-2.5 rounded-xl border flex items-center justify-between ${
-            idx === 0 ? 'bg-amber-500/10 border-amber-500/40' : 'bg-slate-900 border-slate-700'
-          }`;
-          item.innerHTML = `
-            <div class="flex items-center gap-2">
-              <span class="font-bold ${idx === 0 ? 'text-amber-400' : 'text-slate-400'}">#${idx + 1}</span>
-              <span>${b.avatar}</span>
-              <span class="font-bold text-white">${b.name}</span>
-              <span class="font-mono text-slate-400 text-[10px]">+${(b.diffMs / 1000).toFixed(3)}s</span>
-            </div>
-            <div class="flex items-center gap-1">
-              <button onclick="simAwardPoints('${b.player}', 10)" class="px-2 py-1 bg-emerald-500 text-slate-950 font-bold rounded text-[10px] hover:bg-emerald-400">
-                +10 Correct
-              </button>
-            </div>
-          `;
-          queueEl.appendChild(item);
-        });
-      }
-
-      // Update sim scores
-      document.getElementById('sim-score-alice').innerText = `${APP_STATE.sim.scores.alice} pts`;
-      document.getElementById('sim-score-bob').innerText = `${APP_STATE.sim.scores.bob} pts`;
-    }
-
-    /* =========================================================================
-     * UTILITIES & CUSTOM TOAST SYSTEM (Zero Browser Alert() Guaranteed)
-     * ========================================================================= */
-    function showToast(message, type = 'info') {
-      const container = document.getElementById('toast-container');
-      if (!container) return;
-
-      const toast = document.createElement('div');
-      const colors = {
-        success: 'bg-emerald-600 text-white border-emerald-400',
-        error: 'bg-red-600 text-white border-red-400',
-        info: 'bg-slate-800 text-white border-brand-500'
-      };
-
-      toast.className = `px-4 py-3 rounded-2xl border shadow-xl text-xs font-semibold flex items-center gap-3 pointer-events-auto transform transition-all duration-300 translate-y-2 opacity-0 ${colors[type] || colors.info}`;
-      toast.innerHTML = `
-        <i class="fa-solid ${type === 'success' ? 'fa-circle-check' : type === 'error' ? 'fa-triangle-exclamation' : 'fa-bell'} text-sm"></i>
-        <span>${message}</span>
-      `;
-
-      container.appendChild(toast);
-
-      requestAnimationFrame(() => {
-        toast.classList.remove('translate-y-2', 'opacity-0');
-      });
-
-      setTimeout(() => {
-        toast.classList.add('opacity-0', 'translate-y-2');
-        setTimeout(() => toast.remove(), 300);
-      }, 3200);
-    }
-
-    /* =========================================================================
-     * INITIALIZATION ON WINDOW LOAD
-     * ========================================================================= */
-    window.onload = function () {
-      setupAvatarSelector();
-      checkUrlParameters();
-      
-      // Default to Landing view or whatever query param indicated
-      if (!window.location.search.includes('role=')) {
-        switchView('landing');
-      }
-
-      // Pre-render QR
-      renderHostQR();
-      seedSimulatorData();
-    };
+    // Initialize application when DOM is ready
+    window.addEventListener('DOMContentLoaded', () => {
+      App.init();
+    });
   </script>
 </body>
 </html>
